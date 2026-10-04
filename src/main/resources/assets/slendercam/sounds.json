@@ -1,0 +1,6 @@
+{
+  "static_far":  { "sounds": [ "slendercam:static_far" ] },
+  "static_mid":  { "sounds": [ "slendercam:static_mid" ] },
+  "static_rage": { "sounds": [ "slendercam:static_rage" ] },
+  "teleport":    { "sounds": [ "slendercam:teleport" ] }
+}
