@@ -25,6 +25,7 @@ public class SlenderCamMod {
     public static final RegistryObject<SoundEvent> STATIC_FAR = sound("static_far");
     public static final RegistryObject<SoundEvent> STATIC_MID = sound("static_mid");
     public static final RegistryObject<SoundEvent> STATIC_RAGE = sound("static_rage");
+    public static final RegistryObject<SoundEvent> BREATHING = sound("breathing");
     public static final RegistryObject<SoundEvent> TELEPORT = sound("teleport");
 
     private static RegistryObject<SoundEvent> sound(String name) {
