@@ -53,7 +53,7 @@ public class CameraEffects {
     private static final Vec3[] HIST = new Vec3[4];
     private static int histIdx, jumpCooldown;
     private static StaticLoop far, mid, rage;
-
+    private static BreathingLoop breathingLoop;
     public static float intensity() { return intensity; }
     public static float flash() { return flash; }
     public static float zoom(float pt) { return Mth.lerp(pt, zoomPrev, zoomNow); }
@@ -205,6 +205,30 @@ public class CameraEffects {
             if (intensity < 0.005F && this.volume < 0.002F) {
                 this.stop();
             }
+            private static class BreathingLoop extends AbstractTickableSoundInstance {
+        BreathingLoop(SoundEvent ev) {
+            super(ev, SoundSource.MASTER, RandomSource.create());
+            this.looping = true;
+            this.delay = 0;
+            this.volume = 0.001F;
+            this.relative = true;
+            this.attenuation = SoundInstance.Attenuation.NONE;
+        }
+
+        @Override
+        public boolean canStartSilent() { return true; }
+
+        @Override
+        public void tick() {
+            if (intensity > 0.05F) {
+                float targetVol = intensity * intensity * 1.1F * MASTER_VOLUME;
+                this.volume += (targetVol - this.volume) * 0.1F; 
+            } else {
+                this.volume *= 0.88F;
+                if (this.volume < 0.002F) this.stop();
+            }
+        }
+    }
         }
     }
 
@@ -219,6 +243,10 @@ public class CameraEffects {
     private static void manageSounds(Minecraft mc) {
         if (intensity > 0.02F) {
             SoundManager sm = mc.getSoundManager();
+            if (intensity > 0.05F && (breathingLoop == null || breathingLoop.isStopped())) {
+                breathingLoop = new BreathingLoop(SlenderCamMod.BREATHING.get());
+                sm.play(breathingLoop);
+            }
             far = ensure(far, SlenderCamMod.STATIC_FAR.get(), 0, sm);
             mid = ensure(mid, SlenderCamMod.STATIC_MID.get(), 1, sm);
             rage = ensure(rage, SlenderCamMod.STATIC_RAGE.get(), 2, sm);
