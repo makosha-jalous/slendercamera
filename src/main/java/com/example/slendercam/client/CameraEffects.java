@@ -244,11 +244,35 @@ public class CameraEffects {
     @SubscribeEvent
     public static void onCameraAngles(ViewportEvent.ComputeCameraAngles e) {
         if (!CameraHud.active()) return;
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.player == null) return;
+
+        long now = System.currentTimeMillis();
+        float bobX = 0;
+        float bobY = 0;
+
+        // ---- ИМИТАЦИЯ ЖИВОГО ДЕРЖАНИЯ КАМЕРЫ И ДИНАМИКА БЕГА ----
+        if (mc.player.isSprinting()) {
+            // При беге: размашистое, видимое покачивание влево-вправо (синусоида бега)
+            bobX = (float) Math.sin(now * 0.008) * 1.8F;
+            bobY = (float) Math.abs(Math.cos(now * 0.008)) * 0.9F;
+        } else if (mc.player.getDeltaMovement().horizontalDistanceSqr() > 0.001) {
+            // При обычной ходьбе: среднее покачивание
+            bobX = (float) Math.sin(now * 0.005) * 0.8F;
+            bobY = (float) Math.abs(Math.cos(now * 0.005)) * 0.4F;
+        } else {
+            // В покое: медленное волнообразное дыхание живого человека
+            bobX = (float) Math.sin(now * 0.002) * 0.25F;
+            bobY = (float) Math.cos(now * 0.0015) * 0.15F;
+        }
+
+        // Базовая тряска от страха Слендера
         float amp = intensity * 0.5F + flash * 3F;
-        if (amp < 0.01F) return;
-        e.setRoll(e.getRoll() + amp * 1.6F * noise(21));
-        e.setYaw(e.getYaw() + amp * 0.5F * noise(22));
-        e.setPitch(e.getPitch() + amp * 0.5F * noise(23));
+        
+        // Объединяем живые покачивания рук с цифровыми помехами Слендера
+        e.setRoll(e.getRoll() + bobX + (amp * 1.6F * noise(21)));
+        e.setYaw(e.getYaw() + (bobX * 0.5F) + (amp * 0.5F * noise(22)));
+        e.setPitch(e.getPitch() + bobY + (amp * 0.5F * noise(23)));
     }
 
     @SubscribeEvent
