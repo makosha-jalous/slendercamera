@@ -28,25 +28,18 @@ import net.minecraftforge.registries.ForgeRegistries;
 
 import java.util.UUID;
 
-/**
- * Camera reactions to Slenderman (found by his registry name "slenderman:slenderman", so the two mods
- * need no code link): while you look at him the frame, picture and grain shake and hiss, stronger the
- * closer he is, and fade slowly when you look away. A teleport right in front of you gives a strong
- * one-second distortion and a flash of static. Also handles the smooth zoom.
- */
 @Mod.EventBusSubscriber(modid = SlenderCamMod.ID, value = Dist.CLIENT)
 public class CameraEffects {
 
     private static final ResourceLocation SLENDER = new ResourceLocation("slenderman", "slenderman");
 
-    // ======== tweakables ========
-    private static final float ZOOM_MAX = 3.5F;            // zoom factor with the key held
-    private static final float ZOOM_SPEED = 0.14F;         // smoothing per tick (lower = slower)
-    private static final double SEEN_COS = 0.55;           // view cone that counts as "looking at him"
-    private static final double RANGE = 48.0;              // effects reach this far
-    private static final float RISE = 0.08F;               // how fast the glitch builds up
-    private static final float FALL = 0.03F;               // how slowly it fades when you look away
-    private static final float MASTER_VOLUME = 0.9F;       // volume of the static layers
+    private static final float ZOOM_MAX = 3.5F;
+    private static final float ZOOM_SPEED = 0.14F;
+    private static final double SEEN_COS = 0.55;
+    private static final double RANGE = 48.0;
+    private static final float RISE = 0.08F;
+    private static final float FALL = 0.03F;
+    private static final float MASTER_VOLUME = 0.9F;
 
     private static float zoomPrev, zoomNow, intensity, flash;
     private static UUID lastId;
@@ -54,11 +47,11 @@ public class CameraEffects {
     private static int histIdx, jumpCooldown;
     private static StaticLoop far, mid, rage;
     private static BreathingLoop breathingLoop;
+
     public static float intensity() { return intensity; }
     public static float flash() { return flash; }
     public static float zoom(float pt) { return Mth.lerp(pt, zoomPrev, zoomNow); }
 
-    /** Stepped pseudo-random value in -1..1 (digital jitter that changes ~22 times a second). */
     public static float noise(int seed) {
         long now = System.currentTimeMillis();
         long h = (now / 45) * 1013904223L + seed * 2654435761L;
@@ -81,7 +74,6 @@ public class CameraEffects {
 
         boolean cam = mc.player != null && mc.level != null && CameraHud.active();
 
-        // ---- smooth zoom
         boolean zoomKey = cam && mc.screen == null && ClientModEvents.ZOOM_KEY.isDown();
         zoomPrev = zoomNow;
         zoomNow += ((zoomKey ? 1F : 0F) - zoomNow) * ZOOM_SPEED;
@@ -96,7 +88,6 @@ public class CameraEffects {
             return;
         }
 
-        // ---- nearest Slenderman
         Entity sl = null;
         double best = Double.MAX_VALUE;
         for (Entity en : mc.level.entitiesForRendering()) {
@@ -112,7 +103,6 @@ public class CameraEffects {
             dist = Math.sqrt(best);
             observed = cam && dist < RANGE + 32 && isLookingAt(mc.player, sl);
 
-            // teleport = a jump of his position compared with 3 ticks ago (the client interpolates jumps)
             Vec3 pos = sl.position();
             if (!sl.getUUID().equals(lastId)) {
                 lastId = sl.getUUID();
@@ -132,7 +122,6 @@ public class CameraEffects {
             lastId = null;
         }
 
-        // ---- glitch level: stronger when he is close, only while you look at him
         float target = 0F;
         if (cam && observed && dist < RANGE) {
             float prox = 1F - (float) Mth.clamp((dist - 3.0) / (RANGE - 3.0), 0.0, 1.0);
@@ -162,14 +151,11 @@ public class CameraEffects {
         return false;
     }
 
-    // ------------------------------------------------------------ sounds (three layers crossfaded by closeness)
-
     private static float smooth(float a, float b, float x) {
         float t = Mth.clamp((x - a) / (b - a), 0F, 1F);
         return t * t * (3F - 2F * t);
     }
 
-    /** simple glitch (far) -> average static (mid) -> deadly static (point blank). */
     static float layerVolume(int layer) {
         float i = intensity;
         float v;
@@ -195,9 +181,7 @@ public class CameraEffects {
         }
 
         @Override
-        public boolean canStartSilent() {
-            return true;
-        }
+        public boolean canStartSilent() { return true; }
 
         @Override
         public void tick() {
@@ -205,7 +189,10 @@ public class CameraEffects {
             if (intensity < 0.005F && this.volume < 0.002F) {
                 this.stop();
             }
-            private static class BreathingLoop extends AbstractTickableSoundInstance {
+        }
+    }
+
+    private static class BreathingLoop extends AbstractTickableSoundInstance {
         BreathingLoop(SoundEvent ev) {
             super(ev, SoundSource.MASTER, RandomSource.create());
             this.looping = true;
@@ -225,10 +212,10 @@ public class CameraEffects {
                 this.volume += (targetVol - this.volume) * 0.1F; 
             } else {
                 this.volume *= 0.88F;
-                if (this.volume < 0.002F) this.stop();
+                if (this.volume < 0.002F) {
+                    this.stop();
+                }
             }
-        }
-    }
         }
     }
 
@@ -243,17 +230,16 @@ public class CameraEffects {
     private static void manageSounds(Minecraft mc) {
         if (intensity > 0.02F) {
             SoundManager sm = mc.getSoundManager();
+            far = ensure(far, SlenderCamMod.STATIC_FAR.get(), 0, sm);
+            mid = ensure(mid, SlenderCamMod.STATIC_MID.get(), 1, sm);
+            rage = ensure(rage, SlenderCamMod.STATIC_RAGE.get(), 2, sm);
+
             if (intensity > 0.05F && (breathingLoop == null || breathingLoop.isStopped())) {
                 breathingLoop = new BreathingLoop(SlenderCamMod.BREATHING.get());
                 sm.play(breathingLoop);
             }
-            far = ensure(far, SlenderCamMod.STATIC_FAR.get(), 0, sm);
-            mid = ensure(mid, SlenderCamMod.STATIC_MID.get(), 1, sm);
-            rage = ensure(rage, SlenderCamMod.STATIC_RAGE.get(), 2, sm);
         }
     }
-
-    // ------------------------------------------------------------ picture shake + zoom
 
     @SubscribeEvent
     public static void onCameraAngles(ViewportEvent.ComputeCameraAngles e) {
