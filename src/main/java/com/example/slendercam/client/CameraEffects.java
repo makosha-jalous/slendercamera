@@ -79,8 +79,15 @@ public class CameraEffects {
         zoomNow += ((zoomKey ? 1F : 0F) - zoomNow) * ZOOM_SPEED;
         if (!zoomKey && zoomNow < 0.003F) zoomNow = 0F;
 
-        flash *= 0.90F;
-        if (flash < 0.01F) flash = 0F;
+         // ---- ХАРДКОРНОЕ АНАЛОГОВОЕ ЗАЛИПАНИЕ ИЗ ВИДЕО ----
+        if (flash > 0.01F) {
+            long nowTime = System.currentTimeMillis();
+            if ((nowTime / 100) % 3 == 0) {
+                flash *= (0.82F + noise(85) * 0.12F);
+            }
+        } else {
+            flash = 0F;
+        }
         if (jumpCooldown > 0) jumpCooldown--;
 
         if (mc.player == null || mc.level == null) {
