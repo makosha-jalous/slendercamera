@@ -45,6 +45,8 @@ public class CameraHud {
     private static DynamicTexture grain;
     private static ResourceLocation grainLoc;
     private static long lastNoise = 0;
+    private static int currentL = 0, currentR = 0, currentT = 0, currentB = 0;
+    private static long vertTimerEnd = 0, horizTimerEnd = 0;
 
     static boolean active() {
         Minecraft mc = Minecraft.getInstance();
@@ -103,17 +105,38 @@ public class CameraHud {
         ps.scale(s, s, 1F);
         ps.translate(gx, gy, 0F);
 
-        // frame: each edge trembles on its own (sides horizontally, top and bottom vertically)
-        int fl0 = 19, ft0 = 21, fr0 = refW - 24, fb0 = 383;
-        int l = Math.round(fl0 + amp * CameraEffects.noise(1));
-        int r = Math.round(fr0 + amp * CameraEffects.noise(2));
-        int t = Math.round(ft0 + amp * 0.8F * CameraEffects.noise(3));
-        int b = Math.round(fb0 + amp * 0.8F * CameraEffects.noise(4));
-        GuiComponent.fill(ps, l, t, r, t + 1, FRAME);
-        GuiComponent.fill(ps, l, b, r, b + 1, FRAME);
-        GuiComponent.fill(ps, l, t, l + 1, b, FRAME);
-        GuiComponent.fill(ps, r, t, r + 1, b + 1, FRAME);
+         int fl0 = 19, ft0 = 21, fr0 = refW - 24, fb0 = 383;
+        int l = fl0, r = fr0, t = ft0, b = fb0;
+        long now = System.currentTimeMillis();
 
+        if (fl > 0.05F) {
+            // ТРИГГЕР ТЕЛЕПОРТАЦИИ ИЗ ВИДЕО: Моментальное мощное раздувание вширь или сжатие внутрь ВСЕХ рамок сразу
+            int teleportForce = (RND.nextBoolean() ? 1 : -1) * Math.round(25F + RND.nextFloat() * 20F);
+            l -= teleportForce; r += teleportForce; t -= teleportForce; b += teleportForce;
+        } else if (gi > 0.05F) {
+            // ГРУППА 1: Вертикальные линии (Левая и Правая работают сообща, меняя позицию одновременно)
+            if (now > vertTimerEnd) {
+                // Задержка фиксации искажения в РАНДОМНОЙ позиции от 1 до 3 секунд (1000 - 3000 мс)
+                vertTimerEnd = now + 1000 + RND.nextInt(2000);
+                int offsetVert = Math.round((RND.nextFloat() - 0.5F) * gi * 30F);
+                currentL = offsetVert; currentR = offsetVert;
+            }
+            l += currentL; r += currentR;
+
+            // ГРУППА 2: Горизонтальные линии (Верхняя и Нижняя работают независимо от вертикалей, но сообща между собой)
+            if (now > horizTimerEnd) {
+                horizTimerEnd = now + 1000 + RND.nextInt(2000);
+                int offsetHoriz = Math.round((RND.nextFloat() - 0.5F) * gi * 25F);
+                currentT = offsetHoriz; currentB = offsetHoriz;
+            }
+            t += currentT; b += currentB;
+
+            // ОБЩИЙ РАНДОМНЫЙ СБОЙ: Шанс 15%, что в этом кадре обе группы резко дёрнутся вместе вразнобой
+            if (RND.nextFloat() < 0.15F * gi) {
+                int jointGlitch = Math.round(CameraEffects.noise(75) * gi * 12F);
+                l += jointGlitch; r += jointGlitch; t += jointGlitch; b += jointGlitch;
+            }
+        }
         drawBattery(ps);
         drawTopBar(ps, refW, zoom);
 
