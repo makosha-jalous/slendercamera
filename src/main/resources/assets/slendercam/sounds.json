@@ -1,9 +1,0 @@
-{
-  "static_far": { "sounds": [ "slendercam:static_far" ] },
-  "static_mid": { "sounds": [ "slendercam:static_mid" ] },
-  "static_rage": { "sounds": [ "slendercam:static_rage" ] },
-  "teleport": { "sounds": [ "slendercam:teleport" ] },
-  "breathing": { "sounds": [ "slendercam:breathing" ] },
-  "zoom_on": { "sounds": [ "slendercam:zoomon" ] },
-  "zoom_off": { "sounds": [ "slendercam:zoomoff" ] }
-}
