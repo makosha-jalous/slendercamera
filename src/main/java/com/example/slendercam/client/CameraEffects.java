@@ -31,44 +31,42 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.UUID;
 
+/**
+ * Client side of the camera effects.
+ *
+ * AGGRESSION (read from the server AI through getAggression()) drives the strength of everything:
+ * static_heavy, breathing, grain, the strength of the interface bend, the view and the FOV shake.
+ * It works from behind the player's back and through walls too.
+ *
+ * VISUAL CONTACT (the heroine really looks at him, even far away on the horizon) is used only for two things:
+ *  - the base level of the twitches / ticks / short glitches that play even at zero aggression;
+ *  - the decision whether a teleport shows the jumpscare glitch.
+ */
 @Mod.EventBusSubscriber(modid = SlenderCamMod.ID, value = Dist.CLIENT)
 public class CameraEffects {
 
+    /** Slenderman is found in the world by his registry name: the two mods stay fully independent. */
     private static final ResourceLocation SLENDER = new ResourceLocation("slenderman", "slenderman");
 
-    private static final java.util.Map<String, Method> METHODS = new java.util.HashMap<>();
-    private static final java.util.Set<String> MISSING = new java.util.HashSet<>();
+    private static Method aggressionMethod;
 
     private static boolean isSlender(Entity e) {
         return SLENDER.equals(ForgeRegistries.ENTITY_TYPES.getKey(e.getType()));
     }
 
-    private static Number callNumber(Entity e, String name) {
-        if (MISSING.contains(name)) return null;
+    /**
+     * Reads the synced server aggression through reflection: it calls SlendermanEntity#getAggression()
+     * without importing his class, so this mod compiles and runs without the Slenderman mod.
+     */
+    private static float readAggression(Entity e) {
         try {
-            Method m = METHODS.get(name);
-            if (m == null || !m.getDeclaringClass().isInstance(e)) {
-                m = e.getClass().getMethod(name);
-                METHODS.put(name, m);
+            if (aggressionMethod == null || !aggressionMethod.getDeclaringClass().isInstance(e)) {
+                aggressionMethod = e.getClass().getMethod("getAggression");
             }
-            return (Number) m.invoke(e);
-        } catch (NoSuchMethodException ex) {
-            MISSING.add(name);
-            return null;
+            return Mth.clamp(((Number) aggressionMethod.invoke(e)).floatValue(), 0F, 1F);
         } catch (Exception ex) {
-            return null;
+            return 0F;
         }
-    }
-
-    /** Чтение sanity из SlendermanEntity (0..100 -> 0..1)[cite: 9, 10]. */
-    private static float readSanity(Entity e) {
-        Number n = callNumber(e, "getSanity");
-        if (n != null) return Mth.clamp(n.floatValue() / 100.0F, 0F, 1F);
-        Number a = callNumber(e, "getAggression");
-        if (a == null) return 0F;
-        float raw = a.floatValue();
-        if (raw > 1.5F) raw /= 100.0F;
-        return Mth.clamp(raw, 0F, 1F);
     }
 
     private static final float ZOOM_MAX = 3.5F;
@@ -76,43 +74,74 @@ public class CameraEffects {
     private static final float RISE = 0.08F;
     private static final float MASTER_VOLUME = 0.9F;
 
+    // ---- tweakables (all the "feel" numbers live here) ----
+
+    /** "Visual contact": he is in front, in the field of view and not behind a wall, up to this distance (blocks). */
     private static final double SEEN_RANGE = 80.0D;
     private static final double SEEN_COS = 0.55D;
-    private static final float SEEN_SHAKE = 0.06F;
+    /** Base shake level (interface twitches, FOV, view) while he is simply in sight, even at zero aggression. */
+    private static final float SEEN_SHAKE = 0.30F;
 
+    /** "Close" for the near mode of the heavy static and for the frenzy shake: closer than this many blocks. */
     private static final double NEAR_DIST = 12.0D;
-    private static final float HEAVY_START_SANITY = 0.60F;
-    private static final float HEAVY_START_NEAR = 0.35F;
-    private static final float SANITY_FALL_NO_ENTITY = 1.0F / 280.0F;
-    private static final float HEAVY_FULL_SANITY = 1.0F;
+    /** Aggression above this (while he is close) = frenzy: camera and FOV shake at once. */
+    private static final float FRENZY_AGGRESSION = 0.65F;
+    /** Shake level the frenzy pushes the interface / view / FOV to, at least (0..1). */
+    private static final float FRENZY_SHAKE = 0.85F;
+
+    /** FAR / MID mode: static_heavy reads the aggression directly. It starts when the aggression exceeds this ... */
+    private static final float HEAVY_START_AGGRESSION = 0.65F;
+    /** ... and gets louder together with the aggression until it is at full strength at 1.0. */
+    private static final float HEAVY_FULL_AGGRESSION = 1.0F;
+    /** NEAR mode (he is right behind the back, < 12 blocks): static_heavy starts after this many ticks of continuous pressure: 40 = 2 s. */
+    private static final int HEAVY_DELAY_TICKS = 40;
+    /** NEAR mode: once started, it stays on until the aggression falls below this (or he is not close any more). */
+    private static final float HEAVY_NEAR_RELEASE = 0.40F;
+    /** The big static needs at least this many ticks to rise from silence to full: 60 = 3 s (never starts loud). */
     private static final int HEAVY_RISE_TICKS = 60;
+    /** Loudness of the big static at its maximum (0..1, multiplied by MASTER_VOLUME). */
     private static final float HEAVY_VOLUME = 1.0F;
 
+    /** The big static dies out in this many ticks: 130 = 6.5 s. */
     private static final int SOUND_FADE_TICKS = 130;
+    /** static_mid is gone this many ticks after the aggression is gone: 80 = 4 s. */
     private static final int MID_FADE_TICKS = 80;
+    /** Breathing / grain fade out slowly and smoothly: 150 = 7.5 s. */
     private static final int BREATH_FADE_TICKS = 150;
+    /** The interface frame bend fades out slowly and smoothly: 150 = 7.5 s. */
     private static final int HUD_FADE_TICKS = 150;
+    /** The FOV wobble keeps shaking this many ticks AFTER the interface frame is completely calm: 50 = 2.5 s. */
     private static final int FOV_LAG_TICKS = 50;
 
+    /** Short glitch sounds only play while intensity is below this (the big static takes over above it). */
     private static final float GLITCH_SOUND_MAX = 0.65F;
-    private static final int GLITCH_PAUSE_MIN = 60;
+    private static final int GLITCH_PAUSE_MIN = 60;      // 3..5 seconds between short glitch sounds
     private static final int GLITCH_PAUSE_RANDOM = 41;
 
+    /** Peak shake of the player's VIEW in degrees at maximum intensity (small, but very fast). */
     private static final float VIEW_SHAKE_DEG = 1.3F;
+    /** Peak wobble of the field of view (FOV) in degrees at maximum intensity. */
     private static final float VIEW_FOV_WOBBLE = 1.95F;
 
-    private static final float TWITCH_END_SANITY = 0.004F;
+    /** One twitch of the interface frame (and its twitch_tick sound) lasts 12..20 ms. */
+    private static final long TWITCH_MS_MIN = 12L;
+    private static final int TWITCH_MS_RANDOM = 9;
+    /** Loudness of twitch_tick: always the same, it does not depend on the aggression. */
     private static final float TWITCH_TICK_VOLUME = 0.6F;
 
+    /** Length of the distortion when he teleports: a short flash, a fraction of a second. */
     private static final int TELEPORT_GLITCH_MS = 220;
-    private static final float TELEPORT_UNSEEN_CHANCE = 0.10F;
+    /** Chance of the teleport glitch when he teleports OUT of the player's field of view and not in front of her. */
+    private static final float TELEPORT_UNSEEN_CHANCE = 0.20F;
+    /** "In front of the player": closer than this (blocks) and inside this view cone (dot product) = the glitch is always shown. */
     private static final double FRONT_RANGE = 30.0D;
     private static final double FRONT_COS = 0.30D;
 
     private static float zoomPrev, zoomNow, flash;
     private static boolean zoomKeyPrev = false;
-    private static final float ZOOM_SOUND_VOLUME = 0.5F;
+    private static final float ZOOM_SOUND_VOLUME = 0.5F; // zoom sounds loudness (0..1)
 
+    /** A value that rises fast and then falls along a straight line that always takes the same time. */
     private static final class Env {
         float v, peak;
 
@@ -133,42 +162,42 @@ public class CameraEffects {
         }
     }
 
-    private static final Env INTENSITY = new Env();
-    private static final Env HUD = new Env();
-    private static final Env FOV = new Env();
-    private static final Env HEAVY = new Env();
-    private static final Env MID = new Env();
-    private static final Env PROX = new Env();
+    private static final Env INTENSITY = new Env();   // static_mid, breathing, grain, short glitches
+    private static final Env HUD = new Env();         // interface frame bend strength, view shake
+    private static final Env FOV = new Env();         // FOV wobble: same as HUD, but 2.5 s longer
+    private static final Env HEAVY = new Env();       // big static
+    private static final Env MID = new Env();         // static_mid
+    private static final Env PROX = new Env();        // how near he is (for the strength of the view shake)
 
+    /** The shake target of the last FOV_LAG_TICKS ticks: the FOV follows it with a delay, so it calms down later. */
     private static final float[] SHAKE_DELAY = new float[FOV_LAG_TICKS];
     private static int shakeDelayIdx;
 
+    // mirrors of the envelopes above (used by the HUD and the sounds)
     private static float intensity;
     private static float hudPressure;
     private static float fovPressure;
     private static float heavyVol;
     private static float proxVol;
-    private static float sanity;
-    private static boolean seenNow;
-    private static float rawSanity;
-    private static UUID tpUuid;
-    private static int tpSeq;
-    private static float seenGate;
+    private static float aggression;                  // smoothed server aggression 0..1
+    private static boolean seenNow;                   // the heroine looks at him right now
+    private static int heavyWait;                     // NEAR mode: ticks of continuous pressure (close + aggression > 0.65)
+    private static boolean heavyLatched;              // NEAR mode: the big static has started
 
     private static final RandomSource HUD_RNG = RandomSource.create();
     private static int glitchCooldown = 60;
 
+    // Output values read by CameraHud (frame deformation, in reference pixels)
     private static float frameVertical;
     private static float frameHorizontal;
     private static float frameVerticalBend;
     private static float frameHorizontalBend;
 
+    // Sharp twitch of the frame (12..20 ms), values -1..1. It starts together with a kick of the FOV shake.
     private static float twV, twVB, twH, twHB;
-    private static long twitchEndMs;
-    private static long tickEndMs;
-    private static long nextTwitchMs;
-    private static long pauseUntilMs = 0L;
+    private static long twitchEndMs, nextTwitchMs, lastJitterBucket = -1L;
 
+    /** twitch_tick sounds that are playing: they are cut when their twitch ends. */
     private static final class TickSound {
         final SimpleSoundInstance inst;
         final long endMs;
@@ -191,15 +220,15 @@ public class CameraEffects {
     private static HeavyLoop heavyLoop;
     private static BreathingLoop breathingLoop;
 
-    private static final GlitchLoop[] GLITCH = new GlitchLoop[5];
-    private static final float[] GLITCH_GAIN = new float[5];
-    private static int heavyTicks;
-    private static int g2StartTicks = 100;
+    // Looping glitch layers on top of the big static: 1 weakest, 2 medium, 3 strongest
+    private static final GlitchLoop[] GLITCH = new GlitchLoop[4];
+    private static final float[] GLITCH_GAIN = new float[4];
+    private static int heavyTicks;                    // how long the big static has been audible
+    private static int g2StartTicks = 100;            // layer 2 takes over 4-6 s after the big static started
     private static int lastMode, altTicks;
 
     public static float intensity() { return intensity; }
-    public static float sanity() { return sanity; }
-    public static float aggression() { return sanity; }
+    public static float aggression() { return aggression; }
     public static float flash() { return flash; }
     public static float zoom(float pt) { return Mth.lerp(pt, zoomPrev, zoomNow); }
     public static float hudPressure() { return hudPressure; }
@@ -207,17 +236,21 @@ public class CameraEffects {
     public static float frameHorizontal() { return frameHorizontal; }
     public static float frameVerticalBend() { return frameVerticalBend; }
     public static float frameHorizontalBend() { return frameHorizontalBend; }
-    public static float gazePressure() { return sanity; }
-    public static float seenGate() { return seenGate; }
+    /** Kept for compatibility with older code: it is now simply the server aggression. */
+    public static float gazePressure() { return aggression; }
 
     private static boolean tpActive() {
         return System.currentTimeMillis() < teleportGlitchEndMs;
     }
 
-    public static float teleportGlitch() { return tpActive() ? 1F : 0F; }
+    public static float teleportGlitch() {
+        return tpActive() ? 1F : 0F;
+    }
+
     public static float teleportSignX() { return teleportSignX; }
     public static float teleportSignY() { return teleportSignY; }
 
+    /** Kept for compatibility with older code. The HUD now uses its own exact frame mapping. */
     public static float frameWarpX(float x, float y) {
         float t = Mth.clamp((y - 21F) / (383F - 21F), 0F, 1F);
         float wave = (float) Math.sin(Math.PI * t);
@@ -227,6 +260,7 @@ public class CameraEffects {
         return Mth.lerp(n, leftShift, rightShift);
     }
 
+    /** Kept for compatibility with older code. The HUD now uses its own exact frame mapping. */
     public static float frameWarpY(float x, float y) {
         float t = Mth.clamp((x - 19F) / (739F - 43F), 0F, 1F);
         float wave = (float) Math.sin(Math.PI * t);
@@ -247,6 +281,7 @@ public class CameraEffects {
         return a * 0.6F + s * 0.4F;
     }
 
+    /** Fast, sharp jitter for the player's view: a new random value about every 16 ms. */
     public static float jitter(int seed) {
         long now = System.currentTimeMillis();
         long h = (now / 16) * 0x9E3779B97F4A7C15L + seed * 0xC2B2AE3D27D4EB4FL;
@@ -266,6 +301,7 @@ public class CameraEffects {
         boolean cam = mc.player != null && mc.level != null && CameraHud.active();
 
         boolean zoomKey = cam && mc.screen == null && ClientModEvents.ZOOM_KEY.isDown();
+        // Zoom sounds: one when Z is pressed (zoom in), one when it is released (zoom out).
         if (zoomKey && !zoomKeyPrev) {
             mc.getSoundManager().play(SimpleSoundInstance.forUI(SlenderCamMod.ZOOM_ON.get(), 1.0F, ZOOM_SOUND_VOLUME));
         } else if (!zoomKey && zoomKeyPrev && zoomNow > 0.05F) {
@@ -289,14 +325,15 @@ public class CameraEffects {
             MID.kill(0F);
             PROX.kill(0F);
             Arrays.fill(SHAKE_DELAY, 0F);
-            sanity = 0F;
-            rawSanity = 0F;
+            aggression = 0F;
             seenNow = false;
-            seenGate = 0F;
+            heavyWait = 0;
+            heavyLatched = false;
             syncMirrors();
             return;
         }
 
+        // the nearest Slenderman
         Entity sl = null;
         double best = Double.MAX_VALUE;
         for (Entity en : mc.level.entitiesForRendering()) {
@@ -307,55 +344,85 @@ public class CameraEffects {
         }
 
         double dist = 0;
+        float rawAggression = 0F;
         boolean seen = false;
         if (sl != null) {
             dist = Math.sqrt(best);
-            // Проверка строго по прямой видимости модели в поле зрения игрока
+            // THE source of the strength of everything: the real aggression, synced from the server AI.
+            rawAggression = readAggression(sl);
+            // visual contact (even far away on the horizon): only the base level of twitches uses it
             seen = cam && dist < SEEN_RANGE && isLookingAt(mc.player, sl);
-            rawSanity = readSanity(sl);
-            checkTeleport(mc, sl, dist, cam);
+
+            Vec3 pos = sl.position();
+            if (!sl.getUUID().equals(lastId)) {
+                lastId = sl.getUUID();
+                for (int i = 0; i < HIST.length; i++) HIST[i] = pos;
+            }
+            Vec3 old = HIST[histIdx];
+            HIST[histIdx] = pos;
+            histIdx = (histIdx + 1) % HIST.length;
+            if (old != null && jumpCooldown == 0 && pos.distanceTo(old) > 4.0) {
+                jumpCooldown = 10;
+                if (cam) onTeleport(mc, sl, dist);
+            }
         } else {
             lastId = null;
-            rawSanity = Math.max(0F, rawSanity - SANITY_FALL_NO_ENTITY);
         }
         seenNow = seen;
 
-        float seenGoal = seen ? 1F : 0F;
-        seenGate += (seenGoal - seenGate) * (seen ? 0.45F : 0.06F);
-        if (seenGate < 0.001F) seenGate = 0F;
+        // smoothed, so the effects never pop when a network update arrives
+        float rawForCam = cam ? rawAggression : 0F;
+        aggression += (rawForCam - aggression) * 0.30F;
+        if (aggression < 0.001F) aggression = 0F;
 
-        // Камера начинает тряску и рост sanity СТРОГО если сущность в поле зрения (модель видно)
-        float rawForCam = (cam && seen) ? rawSanity : 0F;
-        sanity += (rawForCam - sanity) * 0.30F;
-        if (sanity < 0.001F) sanity = 0F;
+        boolean near = cam && sl != null && dist < NEAR_DIST;
+        boolean frenzy = near && aggression > FRENZY_AGGRESSION;
 
-        boolean near = cam && seen && sl != null && dist < NEAR_DIST;
+        // breathing and grain follow the aggression and fade out slowly
+        INTENSITY.update(aggression, RISE, 1F, BREATH_FADE_TICKS);
 
-        float activeIntensityGoal = seen ? sanity : 0F;
-        INTENSITY.update(activeIntensityGoal, RISE, 1F, BREATH_FADE_TICKS);
-
-        float midGoal = seen ? (smooth(0.12F, 0.40F, sanity) * (1F - smooth(0.62F, 0.85F, sanity))) : 0F;
+        // static_mid flows in at middle aggression and is gone before the big static takes over
+        float midGoal = smooth(0.15F, 0.45F, aggression) * (1F - smooth(0.65F, 0.90F, aggression));
         MID.update(midGoal, 0.08F, 1F, MID_FADE_TICKS);
 
-        float proxGoal = (cam && seen && sl != null) ? 1F - (float) Mth.clamp((dist - 2.5) / 60.0, 0.0, 1.0) : 0F;
+        // how near he is: the view shake grows with it
+        float proxGoal = cam && sl != null ? 1F - (float) Mth.clamp((dist - 2.5) / 60.0, 0.0, 1.0) : 0F;
         PROX.update(proxGoal, 0.10F, 1F, HUD_FADE_TICKS + FOV_LAG_TICKS);
 
-        float heavyGoal = seen ? smooth(near ? HEAVY_START_NEAR : HEAVY_START_SANITY, HEAVY_FULL_SANITY, sanity) : 0F;
+        // ---- Big static (static_heavy) reads the aggression ----
+        // NEAR (< 12 blocks, right behind the back): it starts after 2 s of continuous pressure
+        //   (aggression > 0.65) and works as before. If the player runs away, the counter resets.
+        // FAR: no delay at all, it starts when the aggression exceeds 0.65 and then gets louder exactly
+        //   as the aggression grows (a long stare at a far monster fills the aggression slowly).
+        if (frenzy) heavyWait++;
+        else heavyWait = 0;
+        if (heavyWait >= HEAVY_DELAY_TICKS) heavyLatched = true;
+        if (!near || aggression < HEAVY_NEAR_RELEASE) heavyLatched = false;
+        float heavyGoal;
+        if (near) {
+            heavyGoal = heavyLatched ? smooth(0.40F, 0.95F, aggression) : 0F;
+        } else {
+            heavyGoal = smooth(HEAVY_START_AGGRESSION, HEAVY_FULL_AGGRESSION, aggression);
+        }
         HEAVY.update(heavyGoal, 0.35F, 1F / HEAVY_RISE_TICKS, SOUND_FADE_TICKS);
 
+        // Interface bend and view shake: the strength comes from the aggression, in the frenzy it jumps
+        // to a strong level at once, and while he is simply in sight there is a base level even at zero aggression.
         float shakeTarget = 0F;
-        if (cam && seen) {
-            shakeTarget = sanity;
-            shakeTarget = Math.max(shakeTarget, SEEN_SHAKE);
+        if (cam) {
+            shakeTarget = frenzy ? Math.max(aggression, FRENZY_SHAKE) : aggression;
+            if (seen) shakeTarget = Math.max(shakeTarget, SEEN_SHAKE);
         }
         HUD.update(shakeTarget, 0.22F, 1F, HUD_FADE_TICKS);
 
+        // The FOV follows the same target, but it also remembers it for FOV_LAG_TICKS (2.5 s),
+        // so when the interface frame is completely calm, the FOV keeps trembling for 2.5 s more.
         float delayed = SHAKE_DELAY[shakeDelayIdx];
         SHAKE_DELAY[shakeDelayIdx] = shakeTarget;
         shakeDelayIdx = (shakeDelayIdx + 1) % SHAKE_DELAY.length;
         FOV.update(Math.max(shakeTarget, delayed), 0.22F, 1F, HUD_FADE_TICKS);
 
-        if (!cam || !seen) {
+        if (!cam) {            // camera lowered: everything stops quickly
             INTENSITY.kill(0.8F);
             HUD.kill(0.72F);
             FOV.kill(0.72F);
@@ -363,13 +430,14 @@ public class CameraEffects {
             MID.kill(0.8F);
             PROX.kill(0.72F);
             Arrays.fill(SHAKE_DELAY, 0F);
-            if (!seen) seenGate *= 0.7F;
+            heavyWait = 0;
+            heavyLatched = false;
         }
         if (INTENSITY.v < 0.002F) INTENSITY.kill(0F);
         syncMirrors();
 
         manageSounds(mc);
-        manageGlitchSounds(mc, cam && seen);
+        manageGlitchSounds(mc, cam);
         manageGlitchLayers(mc, near);
     }
 
@@ -381,126 +449,81 @@ public class CameraEffects {
         proxVol = PROX.v;
     }
 
-    private static void checkTeleport(Minecraft mc, Entity sl, double dist, boolean cam) {
-        UUID id = sl.getUUID();
-        Number cue = callNumber(sl, "getTeleportCue");
-        if (cue != null) {
-            int v = cue.intValue();
-            int seq = v >> 2;
-            int flags = v & 3;
-            if (!id.equals(tpUuid)) {
-                tpUuid = id;
-                tpSeq = seq;
-            } else if (seq != tpSeq) {
-                tpSeq = seq;
-                if (cam) onTeleport(mc, flags);
-            }
-            lastId = id;
-            return;
-        }
+    /**
+     * He just jumped to a new place. The short jumpscare glitch is shown when he appears in the player's
+     * field of view, ALWAYS when he appears in front of the player, and with 20% chance otherwise.
+     */
+    private static void onTeleport(Minecraft mc, Entity sl, double dist) {
+        Vec3 look = mc.player.getViewVector(1.0F).normalize();
+        Vec3 to = sl.position().subtract(mc.player.position()).normalize();
+        boolean inFront = dist < FRONT_RANGE && look.dot(to) > FRONT_COS;
+        boolean inView = dist < SEEN_RANGE && isLookingAt(mc.player, sl);
 
-        Vec3 pos = sl.position();
-        if (!id.equals(lastId)) {
-            lastId = id;
-            for (int i = 0; i < HIST.length; i++) HIST[i] = pos;
+        boolean distort = inView || inFront || HUD_RNG.nextFloat() < TELEPORT_UNSEEN_CHANCE;
+        if (distort) {
+            teleportSignX = HUD_RNG.nextBoolean() ? 1F : -1F;
+            teleportSignY = HUD_RNG.nextBoolean() ? 1F : -1F;
+            teleportGlitchEndMs = System.currentTimeMillis() + TELEPORT_GLITCH_MS + HUD_RNG.nextInt(60);
         }
-        Vec3 old = HIST[histIdx];
-        HIST[histIdx] = pos;
-        histIdx = (histIdx + 1) % HIST.length;
-        if (old != null && jumpCooldown == 0 && pos.distanceTo(old) > 4.0) {
-            jumpCooldown = 10;
-            if (cam) {
-                Vec3 look = mc.player.getViewVector(1.0F).normalize();
-                Vec3 to = pos.subtract(mc.player.position()).normalize();
-                boolean inFront = dist < FRONT_RANGE && look.dot(to) > FRONT_COS;
-                boolean inView = dist < SEEN_RANGE && isLookingAt(mc.player, sl);
-                onTeleport(mc, (inView ? 1 : 0) | (inFront ? 2 : 0));
-            }
+        if (distort || dist < 18) {
+            mc.getSoundManager().play(SimpleSoundInstance.forUI(SlenderCamMod.TELEPORT.get(), 1.0F, 1.0F));
         }
-    }
-
-    private static void onTeleport(Minecraft mc, int flags) {
-        boolean distort = flags != 0 || HUD_RNG.nextFloat() < TELEPORT_UNSEEN_CHANCE;
-        if (!distort) return;
-        teleportSignX = HUD_RNG.nextBoolean() ? 1F : -1F;
-        teleportSignY = HUD_RNG.nextBoolean() ? 1F : -1F;
-        teleportGlitchEndMs = System.currentTimeMillis() + TELEPORT_GLITCH_MS + HUD_RNG.nextInt(60);
-        mc.getSoundManager().play(SimpleSoundInstance.forUI(SlenderCamMod.TELEPORT.get(), 1.0F, 1.0F));
     }
 
     /**
-     * ЛОГИКА ТВИТЧЕЙ И РАМОК:
-     * - Звуки (twitch 1-12 / twitch_tick) не зависят от изгиба рамки, проигрываются рандомно строго по 10-13 мс.
-     *   Только по началу накопления sanity они могут играть по 15 мс.
-     * - Изгибы рамки: в самом начале сгибаются по 20-15 миллисекунд, периодически останавливаясь на секунду.
-     * - При sanity >= 70% рамки гнутся не быстрее (только на 15 миллисекунд), но интенсивнее и глубже.
+     * Twitches are born from the FOV shake itself: the FOV gets a new random kick every 16 ms
+     * (jitter(24)). When that kick is strong enough, a sharp twitch of the interface starts in the very
+     * same moment, and the tiny twitch_tick sound plays together with it. The twitch lasts 12..20 ms.
+     * The strength of the twitch comes from the aggression; the base level exists even at zero aggression.
      */
     private static void updateTwitch(long now, float fp) {
-        float s = Mth.clamp(sanity, 0F, 1F);
-        if (!seenNow && s < TWITCH_END_SANITY) {
+        if (fp < 0.01F) {
             nextTwitchMs = 0L;
-            pauseUntilMs = 0L;
             return;
         }
-
-        if (now < pauseUntilMs) return;
+        long bucket = now / 16L;
+        if (bucket == lastJitterBucket) return;      // the FOV kick has not changed since the last frame
+        lastJitterBucket = bucket;
 
         if (nextTwitchMs == 0L) nextTwitchMs = now + 30L;
         if (now < nextTwitchMs) return;
 
-        float j = jitter(24);
-        float threshold = seenNow ? 0.05F : Mth.lerp(s, 0.45F, 0.20F);
+        float j = jitter(24);                        // exactly the value onFov uses in this moment
+        float threshold = Mth.lerp(fp, 0.45F, 0.20F);
         if (Math.abs(j) < threshold) return;
 
-        // 1. СТРОГИЕ ПРАВИЛА ЗВУКОВ: рандомно 10-13 мс, по началу накопления sanity могут играть по 15 мс.
-        long soundDur;
-        if (s < 0.15F && HUD_RNG.nextFloat() < 0.45F) {
-            soundDur = 15L; // По началу накопления sanity
-        } else {
-            soundDur = 10L + HUD_RNG.nextInt(4); // Рандомно 10-13 мс (10, 11, 12, 13)
-        }
-        tickEndMs = now + soundDur;
-        playTwitchTick(now, soundDur);
-
-        // 2. ИЗГИБЫ РАМКИ
-        long bendDur;
-        if (s < 0.20F) {
-            bendDur = 15L + HUD_RNG.nextInt(6); // 15-20 миллисекунд в самом начале
-            if (HUD_RNG.nextFloat() < 0.3F) {
-                pauseUntilMs = now + 1000L;     // Периодическая остановка на секунду
-            }
-        } else if (s >= 0.70F) {
-            bendDur = 15L; // При sanity от 70% и выше гнутся не быстрее (строго по 15 мс)
-        } else {
-            bendDur = 12L + HUD_RNG.nextInt(5);
-        }
-        twitchEndMs = now + bendDur;
-
+        long dur = TWITCH_MS_MIN + HUD_RNG.nextInt(TWITCH_MS_RANDOM);
+        twitchEndMs = now + dur;
         twV = Math.signum(j) * Mth.clamp(0.5F + Math.abs(j), 0.5F, 1F);
         twVB = HUD_RNG.nextFloat() < 0.85F ? signedKick(1F) : 0F;
         twH = HUD_RNG.nextFloat() < 0.85F ? signedKick(1F) : 0F;
         twHB = HUD_RNG.nextFloat() < 0.85F ? signedKick(1F) : 0F;
-
-        int gapMin = Math.round(Mth.lerp(s, 220F, 25F));
-        int gapMax = Math.round(Mth.lerp(s, 900F, 90F));
+        int gapMin = Math.round(Mth.lerp(fp, 60F, 20F));
+        int gapMax = Math.round(Mth.lerp(fp, 240F, 90F));
         nextTwitchMs = twitchEndMs + gapMin + HUD_RNG.nextInt(Math.max(1, gapMax - gapMin));
+
+        // the tick plays while he is in sight or the aggression is above zero, always with the same loudness
+        if (seenNow || aggression > 0.02F) playTwitchTick(now, dur);
     }
 
+    /**
+     * Called by CameraHud once per rendered frame (not once per tick), so the twitches can be
+     * only a few milliseconds long. Produces frameVertical / frameHorizontal / ...Bend.
+     * The frame is calm between twitches; during a twitch it jumps to the bent pose and back at once.
+     */
     public static void frameUpdate() {
         long now = System.currentTimeMillis();
+
         stopFinishedTicks(now);
+        // twitches + ticks follow the FOV shake (which lives longer than the interface bend)
         updateTwitch(now, Mth.clamp(fovPressure, 0F, 1F));
 
         if (tpActive()) {
+            // Teleport: both groups are forced into one violent pose for the short flash.
             frameVertical = 34F * teleportSignX;
             frameHorizontal = 28F * teleportSignY;
             frameVerticalBend = 19F * teleportSignX;
             frameHorizontalBend = 17F * teleportSignY;
-            return;
-        }
-
-        if (seenGate < 0.02F) {
-            frameVertical = frameHorizontal = frameVerticalBend = frameHorizontalBend = 0F;
             return;
         }
 
@@ -510,41 +533,26 @@ public class CameraEffects {
         }
 
         float p = Mth.clamp(hudPressure, 0F, 1F);
+        // Fade the distortion in smoothly so nothing pops at very low pressure.
         float fade = Mth.clamp(p / 0.12F, 0F, 1F);
 
+        // Strong already at the base level (he is far away), much stronger with the aggression.
         float spread = (7F + 16F * p + 14F * p * p) * fade;
         float bend = (4F + 9F * p + 9F * p * p) * fade;
 
-        // Когда sanity от 70% и выше — рамки гнутся интенсивнее и глубже!
-        if (sanity >= 0.70F) {
-            float extra = (sanity - 0.70F) / 0.30F;
-            spread *= 1F + 1.40F * extra;
-            bend   *= 1F + 1.80F * extra;
-        } else if (sanity > 0.80F) {
-            float extra = (sanity - 0.80F) / 0.20F;
-            spread *= 1F + 0.60F * extra;
-            bend   *= 1F + 0.80F * extra;
-        }
-
-        float g = Mth.clamp(seenGate, 0F, 1F);
-
-        frameVertical = twV * spread * g;
-        frameVerticalBend = twVB * bend * g;
-        frameHorizontal = twH * spread * 0.82F * g;
-        frameHorizontalBend = twHB * bend * 0.90F * g;
+        frameVertical = twV * spread;
+        frameVerticalBend = twVB * bend;
+        frameHorizontal = twH * spread * 0.82F;
+        frameHorizontalBend = twHB * bend * 0.90F;
     }
 
-    private static void playTwitchTick(long now, long dur) {
+    /** One tiny slice of static, exactly when the FOV gets a strong kick. It is cut when the twitch ends. */
+    private static void playTwitchTick(long now, long durMs) {
         float pitch = 0.90F + HUD_RNG.nextFloat() * 0.20F;
         SimpleSoundInstance inst = SimpleSoundInstance.forUI(SlenderCamMod.TWITCH_TICK.get(), pitch,
                 Mth.clamp(MASTER_VOLUME * TWITCH_TICK_VOLUME, 0F, 1F));
         Minecraft.getInstance().getSoundManager().play(inst);
-        ACTIVE_TICKS.add(new TickSound(inst, now + dur));
-    }
-
-    @SubscribeEvent
-    public static void onRenderTick(TickEvent.RenderTickEvent e) {
-        if (e.phase == TickEvent.Phase.START) stopFinishedTicks(System.currentTimeMillis());
+        ACTIVE_TICKS.add(new TickSound(inst, now + durMs));
     }
 
     private static void stopFinishedTicks(long now) {
@@ -566,6 +574,7 @@ public class CameraEffects {
         return shaped * magnitude;
     }
 
+    /** Is he in the field of view of the heroine and not hidden behind blocks? */
     private static boolean isLookingAt(Player p, Entity s) {
         Vec3 eye = p.getEyePosition();
         Vec3 look = p.getViewVector(1.0F).normalize();
@@ -588,58 +597,96 @@ public class CameraEffects {
         return t * t * (3F - 2F * t);
     }
 
+    /** static_mid: seamless loop, its loudness follows the MID envelope. */
     private static class MidLoop extends AbstractTickableSoundInstance {
         MidLoop(SoundEvent ev) {
             super(ev, SoundSource.MASTER, RandomSource.create());
-            this.looping = true; this.delay = 0; this.volume = 0.001F;
-            this.relative = true; this.attenuation = SoundInstance.Attenuation.NONE;
+            this.looping = true;
+            this.delay = 0;
+            this.volume = 0.001F;
+            this.relative = true;
+            this.attenuation = SoundInstance.Attenuation.NONE;
         }
-        @Override public boolean canStartSilent() { return true; }
-        @Override public void tick() {
+
+        @Override
+        public boolean canStartSilent() { return true; }
+
+        @Override
+        public void tick() {
             this.volume = MID.v * MASTER_VOLUME;
-            if (MID.v < 0.002F) this.stop();
+            if (MID.v < 0.002F) {
+                this.stop();
+            }
         }
     }
 
+    /** staticheavy.ogg: seamless loop, its loudness is heavyVol. */
     private static class HeavyLoop extends AbstractTickableSoundInstance {
         HeavyLoop(SoundEvent ev) {
             super(ev, SoundSource.MASTER, RandomSource.create());
-            this.looping = true; this.delay = 0; this.volume = 0.001F;
-            this.relative = true; this.attenuation = SoundInstance.Attenuation.NONE;
+            this.looping = true;
+            this.delay = 0;
+            this.volume = 0.001F;
+            this.relative = true;
+            this.attenuation = SoundInstance.Attenuation.NONE;
         }
-        @Override public boolean canStartSilent() { return true; }
-        @Override public void tick() {
+
+        @Override
+        public boolean canStartSilent() { return true; }
+
+        @Override
+        public void tick() {
             this.volume = heavyVol * HEAVY_VOLUME * MASTER_VOLUME;
             if (heavyVol < 0.003F) this.stop();
         }
     }
 
+    /** staticglitch / 2 / 3: seamless loops, each with its own gain (see manageGlitchLayers). */
     private static class GlitchLoop extends AbstractTickableSoundInstance {
         private final int layer;
+
         GlitchLoop(SoundEvent ev, int layer) {
             super(ev, SoundSource.MASTER, RandomSource.create());
-            this.layer = layer; this.looping = true; this.delay = 0; this.volume = 0.001F;
-            this.relative = true; this.attenuation = SoundInstance.Attenuation.NONE;
+            this.layer = layer;
+            this.looping = true;
+            this.delay = 0;
+            this.volume = 0.001F;
+            this.relative = true;
+            this.attenuation = SoundInstance.Attenuation.NONE;
         }
-        @Override public boolean canStartSilent() { return true; }
-        @Override public void tick() {
+
+        @Override
+        public boolean canStartSilent() { return true; }
+
+        @Override
+        public void tick() {
             this.volume = GLITCH_GAIN[layer] * MASTER_VOLUME;
             if (GLITCH_GAIN[layer] < 0.002F && lastMode != layer) this.stop();
         }
     }
 
+    /** The heroine's breathing follows the smooth envelopes and fades out slowly together with them. */
     private static class BreathingLoop extends AbstractTickableSoundInstance {
         BreathingLoop(SoundEvent ev) {
             super(ev, SoundSource.MASTER, RandomSource.create());
-            this.looping = true; this.delay = 0; this.volume = 0.001F;
-            this.relative = true; this.attenuation = SoundInstance.Attenuation.NONE;
+            this.looping = true;
+            this.delay = 0;
+            this.volume = 0.001F;
+            this.relative = true;
+            this.attenuation = SoundInstance.Attenuation.NONE;
         }
-        @Override public boolean canStartSilent() { return true; }
-        @Override public void tick() {
+
+        @Override
+        public boolean canStartSilent() { return true; }
+
+        @Override
+        public void tick() {
             float level = Math.max(intensity, heavyVol);
             float targetVol = level * level * 1.1F * MASTER_VOLUME;
-            this.volume += (targetVol - this.volume) * 0.08F;
-            if (level < 0.01F && this.volume < 0.004F) this.stop();
+            this.volume += (targetVol - this.volume) * 0.08F;   // slow and smooth, no sudden cut
+            if (level < 0.01F && this.volume < 0.004F) {
+                this.stop();
+            }
         }
     }
 
@@ -659,6 +706,10 @@ public class CameraEffects {
         }
     }
 
+    /**
+     * Short glitch sounds (shortglitch*.ogg): one random file every 3-5 seconds while the aggression
+     * is at low / mid level. They keep playing (quieter and quieter) while the glitch fades out.
+     */
     private static void manageGlitchSounds(Minecraft mc, boolean cam) {
         boolean active = cam && intensity > 0.02F && intensity < GLITCH_SOUND_MAX;
         if (!active) {
@@ -668,8 +719,7 @@ public class CameraEffects {
         glitchCooldown--;
         if (glitchCooldown > 0) return;
 
-        int pause = GLITCH_PAUSE_MIN + HUD_RNG.nextInt(GLITCH_PAUSE_RANDOM);
-        glitchCooldown = Math.round(pause * Mth.lerp(smooth(0.02F, 0.65F, intensity), 1.3F, 0.55F));
+        glitchCooldown = GLITCH_PAUSE_MIN + HUD_RNG.nextInt(GLITCH_PAUSE_RANDOM);
         float vol = MASTER_VOLUME * Mth.clamp(0.35F + intensity, 0F, 1F) * smooth(0.02F, 0.12F, intensity);
         float pitch = 0.92F + HUD_RNG.nextFloat() * 0.16F;
         mc.getSoundManager().play(SimpleSoundInstance.forUI(SlenderCamMod.GLITCH_SHORT.get(), pitch, vol));
@@ -679,46 +729,41 @@ public class CameraEffects {
         return switch (layer) {
             case 1 -> SlenderCamMod.STATIC_GLITCH_1.get();
             case 2 -> SlenderCamMod.STATIC_GLITCH_2.get();
-            case 3 -> SlenderCamMod.STATIC_GLITCH_3.get();
-            case 4 -> SlenderCamMod.STATIC_GLITCH_4.get();
             default -> SlenderCamMod.STATIC_GLITCH_3.get();
         };
     }
 
-    private static long glitchSwitchTimer = 0L;
-    private static int activeGlitchLayer = 3;
-
     /**
-     * Логика для static_glitch3 и static_glitch4:
-     * Играют на одинаковом уровне sanity, но НЕ одновременно. 
-     * Они плавно заменяют друг друга без обрывов.
+     * The three staticglitch loops on top of the big static. Only ONE of them is the "main" layer at a
+     * time; when another one takes over, the old one is cut off in a quarter of a second.
+     *  layer 1 - weakest: starts early and grows together with the big static;
+     *  layer 2 - takes over 4-6 s after the big static started, full strength at once; it is also the
+     *            background when he is not close any more (sometimes layer 1 replaces it for a moment);
+     *  layer 3 - strongest: only while he is close and the static is very strong.
+     * When he is not close any more, layer 3 is cut at once, layers 1/2 fade out about 2 s before the big static.
      */
     private static void manageGlitchLayers(Minecraft mc, boolean near) {
         SoundManager sm = mc.getSoundManager();
         float h = heavyVol;
 
         if (h > 0.03F) {
-            if (heavyTicks == 0) g2StartTicks = 80 + HUD_RNG.nextInt(41);
+            if (heavyTicks == 0) g2StartTicks = 80 + HUD_RNG.nextInt(41);   // 4-6 s
             heavyTicks++;
         } else {
             heavyTicks = 0;
         }
 
+        // layers 1 and 2 reach silence about 2 s (h = 0.068) before the big static is gone
         float early = smooth(0.068F, 0.20F, h);
 
         int want = 0;
         if (near && h > 0.70F) {
-            long now = System.currentTimeMillis();
-            if (now > glitchSwitchTimer) {
-                // Чередование между 3 и 4 глитчем без наложения
-                activeGlitchLayer = HUD_RNG.nextBoolean() ? 3 : 4;
-                glitchSwitchTimer = now + 4000L + HUD_RNG.nextInt(4000);
-            }
-            want = activeGlitchLayer;
+            want = 3;
         } else if (early > 0F) {
             if (heavyTicks >= g2StartTicks || lastMode >= 2) want = 2;
             else if (h > 0.10F) want = 1;
 
+            // he is not close any more: now and then the weak layer replaces layer 2 for a moment
             if (!near && want == 2) {
                 if (altTicks > 0) { altTicks--; want = 1; }
                 else if (h > 0.15F && HUD_RNG.nextFloat() < 0.012F) altTicks = 40 + HUD_RNG.nextInt(40);
@@ -728,20 +773,19 @@ public class CameraEffects {
         }
         lastMode = want;
 
-        float[] level = new float[5];
+        float[] level = new float[4];
         level[1] = 0.80F * (0.30F + 0.70F * h) * early;
         level[2] = 0.85F * (0.50F + 0.50F * h) * early;
-        level[3] = (want == 3) ? (1.00F * (0.60F + 0.40F * h)) : 0F;
-        level[4] = (want == 4) ? (1.00F * (0.60F + 0.40F * h)) : 0F;
+        level[3] = 1.00F * (0.60F + 0.40F * h);
 
-        for (int i = 1; i <= 4; i++) {
-            float goal = level[i];
+        for (int i = 1; i <= 3; i++) {
+            float goal = want == i ? level[i] : 0F;
             float g = GLITCH_GAIN[i];
             if (goal > g) {
-                float up = i == 1 ? 0.04F : 0.35F;
+                float up = i == 1 ? 0.04F : 0.35F;       // layer 1 grows, layers 2 and 3 play at once
                 g = Math.min(goal, g + up);
             } else {
-                g = Math.max(goal, g - 0.20F);
+                g = Math.max(goal, g - 0.20F);           // cut off in about a quarter of a second
             }
             GLITCH_GAIN[i] = g;
 
@@ -752,6 +796,10 @@ public class CameraEffects {
         }
     }
 
+    /**
+     * Shaking of the heroine's VIEW (not of the interface): very fast, strong, but small in amplitude.
+     * It follows the interface envelope (HUD), so it calms down together with the frame.
+     */
     @SubscribeEvent
     public static void onCameraAngles(ViewportEvent.ComputeCameraAngles e) {
         if (!CameraHud.active()) return;
@@ -762,6 +810,7 @@ public class CameraEffects {
         float bobX;
         float bobY;
 
+        // ---- living hand-held camera feel ----
         if (mc.player.isSprinting()) {
             bobX = (float) Math.sin(now * 0.008) * 1.8F;
             bobY = (float) Math.abs(Math.cos(now * 0.008)) * 0.9F;
@@ -776,6 +825,7 @@ public class CameraEffects {
         float level = hudPressure >= 0.01F ? hudPressure : 0F;
         float amp = 0F;
         if (level > 0F) {
+            // stronger with the level AND the nearer he is (0.5x far away .. 1.35x next to us)
             amp = (0.12F + 0.78F * level) * Mth.clamp(level / 0.08F, 0F, 1F) * VIEW_SHAKE_DEG
                     * (0.50F + 0.85F * proxVol);
         }
@@ -787,6 +837,7 @@ public class CameraEffects {
         e.setPitch(e.getPitch() + bobY + amp * jitter(23));
     }
 
+    /** FOV wobble: the same strength curve, but its own (longer) envelope: it calms down 2.5 s after the frame. */
     @SubscribeEvent
     public static void onFov(ViewportEvent.ComputeFov e) {
         if (!CameraHud.active() || !e.usedConfiguredFov()) return;
