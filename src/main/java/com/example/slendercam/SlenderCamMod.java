@@ -26,7 +26,6 @@ public class SlenderCamMod {
     public static final RegistryObject<SoundEvent> STATIC_GLITCH_1 = sound("static_glitch1");
     public static final RegistryObject<SoundEvent> STATIC_GLITCH_2 = sound("static_glitch2");
     public static final RegistryObject<SoundEvent> STATIC_GLITCH_3 = sound("static_glitch3");
-    public static final RegistryObject<SoundEvent> STATIC_GLITCH_4 = sound("static_glitch4");
     public static final RegistryObject<SoundEvent> TWITCH_TICK = sound("twitch_tick");
     public static final RegistryObject<SoundEvent> GLITCH_SHORT = sound("glitch_short");
     public static final RegistryObject<SoundEvent> BREATHING = sound("breathing");
