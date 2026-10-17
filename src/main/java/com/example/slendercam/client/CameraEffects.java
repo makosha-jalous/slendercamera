@@ -60,6 +60,7 @@ public class CameraEffects {
         }
     }
 
+    /** Чтение sanity из SlendermanEntity (0..100 -> 0..1)[cite: 9, 10]. */
     private static float readSanity(Entity e) {
         Number n = callNumber(e, "getSanity");
         if (n != null) return Mth.clamp(n.floatValue() / 100.0F, 0F, 1F);
@@ -309,7 +310,7 @@ public class CameraEffects {
         boolean seen = false;
         if (sl != null) {
             dist = Math.sqrt(best);
-            // Проверка строго по прямой видимости модели в поле зрения
+            // Проверка строго по прямой видимости модели в поле зрения игрока
             seen = cam && dist < SEEN_RANGE && isLookingAt(mc.player, sl);
             rawSanity = readSanity(sl);
             checkTeleport(mc, sl, dist, cam);
@@ -323,7 +324,7 @@ public class CameraEffects {
         seenGate += (seenGoal - seenGate) * (seen ? 0.45F : 0.06F);
         if (seenGate < 0.001F) seenGate = 0F;
 
-        // Рост sanity и эффекты активируются ТОЛЬКО если сущность видна игроку
+        // Камера начинает тряску и рост sanity СТРОГО если сущность в поле зрения (модель видно)
         float rawForCam = (cam && seen) ? rawSanity : 0F;
         sanity += (rawForCam - sanity) * 0.30F;
         if (sanity < 0.001F) sanity = 0F;
@@ -428,9 +429,11 @@ public class CameraEffects {
     }
 
     /**
-     * Обновление твитчей:
-     * - Звуки не зависят от рамки, играют строго рандомно по 10–13 мс (в самом начале sanity — по 15 мс).
-     * - Изгибы рамки: в начале 20–15 мс с паузами на секунду; при sanity >= 70% гнутся не быстрее (15 мс), но интенсивнее и глубже.
+     * ЛОГИКА ТВИТЧЕЙ И РАМОК:
+     * - Звуки (twitch 1-12 / twitch_tick) не зависят от изгиба рамки, проигрываются рандомно строго по 10-13 мс.
+     *   Только по началу накопления sanity они могут играть по 15 мс.
+     * - Изгибы рамки: в самом начале сгибаются по 20-15 миллисекунд, периодически останавливаясь на секунду.
+     * - При sanity >= 70% рамки гнутся не быстрее (только на 15 миллисекунд), но интенсивнее и глубже.
      */
     private static void updateTwitch(long now, float fp) {
         float s = Mth.clamp(sanity, 0F, 1F);
@@ -449,25 +452,25 @@ public class CameraEffects {
         float threshold = seenNow ? 0.05F : Mth.lerp(s, 0.45F, 0.20F);
         if (Math.abs(j) < threshold) return;
 
-        // Звук: строго по 10-13 мс, по началу накопления sanity могут играть по 15 мс
+        // 1. СТРОГИЕ ПРАВИЛА ЗВУКОВ: рандомно 10-13 мс, по началу накопления sanity могут играть по 15 мс.
         long soundDur;
-        if (s < 0.15F && HUD_RNG.nextFloat() < 0.4F) {
-            soundDur = 15L;
+        if (s < 0.15F && HUD_RNG.nextFloat() < 0.45F) {
+            soundDur = 15L; // По началу накопления sanity
         } else {
-            soundDur = 10L + HUD_RNG.nextInt(4); // 10, 11, 12, 13 мс
+            soundDur = 10L + HUD_RNG.nextInt(4); // Рандомно 10-13 мс (10, 11, 12, 13)
         }
         tickEndMs = now + soundDur;
         playTwitchTick(now, soundDur);
 
-        // Длительность изгиба рамки
+        // 2. ИЗГИБЫ РАМКИ
         long bendDur;
         if (s < 0.20F) {
-            bendDur = 15L + HUD_RNG.nextInt(6); // 15..20 мс в начале
-            if (HUD_RNG.nextFloat() < 0.25F) {
-                pauseUntilMs = now + 1000L; // периодическая остановка на секунду
+            bendDur = 15L + HUD_RNG.nextInt(6); // 15-20 миллисекунд в самом начале
+            if (HUD_RNG.nextFloat() < 0.3F) {
+                pauseUntilMs = now + 1000L;     // Периодическая остановка на секунду
             }
         } else if (s >= 0.70F) {
-            bendDur = 15L; // гнутся не быстрее (только на 15 миллисекунд)
+            bendDur = 15L; // При sanity от 70% и выше гнутся не быстрее (строго по 15 мс)
         } else {
             bendDur = 12L + HUD_RNG.nextInt(5);
         }
@@ -515,8 +518,8 @@ public class CameraEffects {
         // Когда sanity от 70% и выше — рамки гнутся интенсивнее и глубже!
         if (sanity >= 0.70F) {
             float extra = (sanity - 0.70F) / 0.30F;
-            spread *= 1F + 1.20F * extra;
-            bend   *= 1F + 1.50F * extra;
+            spread *= 1F + 1.40F * extra;
+            bend   *= 1F + 1.80F * extra;
         } else if (sanity > 0.80F) {
             float extra = (sanity - 0.80F) / 0.20F;
             spread *= 1F + 0.60F * extra;
@@ -686,8 +689,9 @@ public class CameraEffects {
     private static int activeGlitchLayer = 3;
 
     /**
-     * Логика глитчей 3 и 4: работают на том же уровне sanity, но НЕ одновременно.
-     * Они плавно сменяют друг друга без обрывов звукового потока.
+     * Логика для static_glitch3 и static_glitch4:
+     * Играют на одинаковом уровне sanity, но НЕ одновременно. 
+     * Они плавно заменяют друг друга без обрывов.
      */
     private static void manageGlitchLayers(Minecraft mc, boolean near) {
         SoundManager sm = mc.getSoundManager();
@@ -706,8 +710,9 @@ public class CameraEffects {
         if (near && h > 0.70F) {
             long now = System.currentTimeMillis();
             if (now > glitchSwitchTimer) {
+                // Чередование между 3 и 4 глитчем без наложения
                 activeGlitchLayer = HUD_RNG.nextBoolean() ? 3 : 4;
-                glitchSwitchTimer = now + 4000L + HUD_RNG.nextInt(4000); // Переключение раз в 4-8 секунд
+                glitchSwitchTimer = now + 4000L + HUD_RNG.nextInt(4000);
             }
             want = activeGlitchLayer;
         } else if (early > 0F) {
