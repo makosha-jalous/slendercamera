@@ -1,14 +1,144 @@
 {
-  "static_mid": {"sounds": ["slendercam:static_mid"]},
-  "static_heavy": {"sounds": ["slendercam:staticheavy"]},
-  "static_glitch1": {"sounds": ["slendercam:staticglitch"]},
-  "static_glitch2": {"sounds": ["slendercam:staticglitch2"]},
-  "static_glitch3": {"sounds": ["slendercam:staticglitch3"]},
-  "static_glitch4": {"sounds": ["slendercam:staticglitch4"]},
-  "teleport": {"sounds": ["slendercam:teleport"]},
-  "breathing": {"sounds": ["slendercam:breathing"]},
-  "zoom_on": {"sounds": ["slendercam:zoomon"]},
-  "zoom_off": {"sounds": ["slendercam:zoomoff"]},
-  "glitch_short": {"sounds": ["slendercam:shortglitch", "slendercam:shortglitch1", "slendercam:shortglitch2", "slendercam:shortglitch3", "slendercam:shortglitch4", "slendercam:shortglitch5", "slendercam:shortglitch6"]},
-  "twitch_tick": {"sounds": ["slendercam:twitch1", "slendercam:twitch2", "slendercam:twitch3", "slendercam:twitch4", "slendercam:twitch5", "slendercam:twitch6", "slendercam:twitch7", "slendercam:twitch8", "slendercam:twitch9", "slendercam:twitch10", "slendercam:twitch11", "slendercam:twitch12"]}
+  "static_medium": {
+    "sounds": [
+      "slendercam:staticmedium"
+    ]
+  },
+  "static_medium_piece": {
+    "sounds": [
+      "slendercam:staticmedium_p01",
+      "slendercam:staticmedium_p02",
+      "slendercam:staticmedium_p03",
+      "slendercam:staticmedium_p04",
+      "slendercam:staticmedium_p05",
+      "slendercam:staticmedium_p06",
+      "slendercam:staticmedium_p07",
+      "slendercam:staticmedium_p08",
+      "slendercam:staticmedium_p09",
+      "slendercam:staticmedium_p10",
+      "slendercam:staticmedium_p11",
+      "slendercam:staticmedium_p12",
+      "slendercam:staticmedium_p13",
+      "slendercam:staticmedium_p14",
+      "slendercam:staticmedium_p15",
+      "slendercam:staticmedium_p16",
+      "slendercam:staticmedium_p17",
+      "slendercam:staticmedium_p18",
+      "slendercam:staticmedium_p19",
+      "slendercam:staticmedium_p20",
+      "slendercam:staticmedium_p21",
+      "slendercam:staticmedium_p22",
+      "slendercam:staticmedium_p23",
+      "slendercam:staticmedium_p24",
+      "slendercam:staticmedium_p25",
+      "slendercam:staticmedium_p26",
+      "slendercam:staticmedium_p27",
+      "slendercam:staticmedium_p28",
+      "slendercam:staticmedium_p29",
+      "slendercam:staticmedium_p30",
+      "slendercam:staticmedium_p31",
+      "slendercam:staticmedium_p32",
+      "slendercam:staticmedium_p33",
+      "slendercam:staticmedium_p34",
+      "slendercam:staticmedium_p35",
+      "slendercam:staticmedium_p36",
+      "slendercam:staticmedium_p37"
+    ]
+  },
+  "static_light": {
+    "sounds": [
+      "slendercam:staticlight01",
+      "slendercam:staticlight02",
+      "slendercam:staticlight03",
+      "slendercam:staticlight04",
+      "slendercam:staticlight05",
+      "slendercam:staticlight06",
+      "slendercam:staticlight07",
+      "slendercam:staticlight08",
+      "slendercam:staticlight09",
+      "slendercam:staticlight10",
+      "slendercam:staticlight11",
+      "slendercam:staticlight12",
+      "slendercam:staticlight13",
+      "slendercam:staticlight14",
+      "slendercam:staticlight15",
+      "slendercam:staticlight16",
+      "slendercam:staticlight17",
+      "slendercam:staticlight18",
+      "slendercam:staticlight19",
+      "slendercam:staticlight20",
+      "slendercam:staticlight21",
+      "slendercam:staticlight22",
+      "slendercam:staticlight23",
+      "slendercam:staticlight24",
+      "slendercam:staticlight25",
+      "slendercam:staticlight26",
+      "slendercam:staticlight27",
+      "slendercam:staticlight28",
+      "slendercam:staticlight29",
+      "slendercam:staticlight30",
+      "slendercam:staticlight31",
+      "slendercam:staticlight32",
+      "slendercam:staticlight33",
+      "slendercam:staticlight34",
+      "slendercam:staticlight35",
+      "slendercam:staticlight36"
+    ]
+  },
+  "static_heavy": {
+    "sounds": [
+      "slendercam:staticheavy"
+    ]
+  },
+  "static_glitch1": {
+    "sounds": [
+      "slendercam:staticglitch"
+    ]
+  },
+  "static_glitch2": {
+    "sounds": [
+      "slendercam:staticglitch2"
+    ]
+  },
+  "static_glitch3": {
+    "sounds": [
+      "slendercam:staticglitch3"
+    ]
+  },
+  "static_glitch4": {
+    "sounds": [
+      "slendercam:staticglitch4"
+    ]
+  },
+  "teleport": {
+    "sounds": [
+      "slendercam:teleport"
+    ]
+  },
+  "breathing": {
+    "sounds": [
+      "slendercam:breathing"
+    ]
+  },
+  "zoom_on": {
+    "sounds": [
+      "slendercam:zoomon"
+    ]
+  },
+  "zoom_off": {
+    "sounds": [
+      "slendercam:zoomoff"
+    ]
+  },
+  "glitch_short": {
+    "sounds": [
+      "slendercam:shortglitch",
+      "slendercam:shortglitch1",
+      "slendercam:shortglitch2",
+      "slendercam:shortglitch3",
+      "slendercam:shortglitch4",
+      "slendercam:shortglitch5",
+      "slendercam:shortglitch6"
+    ]
+  }
 }
