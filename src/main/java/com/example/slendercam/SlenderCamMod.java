@@ -21,13 +21,14 @@ public class SlenderCamMod {
     public static final RegistryObject<Item> CAMERA = ITEMS.register("camera",
             () -> new Item(new Item.Properties().stacksTo(1).tab(CreativeModeTab.TAB_MISC)));
 
-    public static final RegistryObject<SoundEvent> STATIC_MID = sound("static_mid");
+    public static final RegistryObject<SoundEvent> STATIC_MEDIUM = sound("static_medium");
+    public static final RegistryObject<SoundEvent> STATIC_MEDIUM_PIECE = sound("static_medium_piece");
     public static final RegistryObject<SoundEvent> STATIC_HEAVY = sound("static_heavy");
     public static final RegistryObject<SoundEvent> STATIC_GLITCH_1 = sound("static_glitch1");
     public static final RegistryObject<SoundEvent> STATIC_GLITCH_2 = sound("static_glitch2");
     public static final RegistryObject<SoundEvent> STATIC_GLITCH_3 = sound("static_glitch3");
     public static final RegistryObject<SoundEvent> STATIC_GLITCH_4 = sound("static_glitch4");
-    public static final RegistryObject<SoundEvent> TWITCH_TICK = sound("twitch_tick");
+    public static final RegistryObject<SoundEvent> STATIC_LIGHT = sound("static_light");
     public static final RegistryObject<SoundEvent> GLITCH_SHORT = sound("glitch_short");
     public static final RegistryObject<SoundEvent> BREATHING = sound("breathing");
     public static final RegistryObject<SoundEvent> TELEPORT = sound("teleport");
