@@ -111,37 +111,48 @@ public class CameraEffects {
     private static final float VIEW_SHAKE_DEG = 1.3F;
     private static final float VIEW_FOV_WOBBLE = 1.95F;
 
-    // ---- stutter (the twelve twitch files) and frame bend, measured on the reference video ----
-    // SOUND: a stream of very short pieces of the twitch files, about 22-28 per second at full sanity loss
-    //        (gaps 25-60 ms). Every 2.0 s the stream starts again loud and fades to about 1/6 of the loudness.
-    // BEND:  the interface frame bends in the same rhythm: every piece of the stutter starts a bent pose of the same
-    //        length, then the frame is straight until the next piece; close to him the pose can freeze for ~1 s.
-    /** a piece of the stutter is cut after this share of the gap to the next piece (ms), but not shorter / longer than: */
-    private static final float PULSE_CUT_SHARE = 0.65F;
-    private static final long PULSE_CUT_MIN = 10L;
-    private static final long PULSE_CUT_MAX = 140L;
+    // ---- stutter (static_light), bend of the interface, medium static, breathing ----
+    // SOUND: staticlight.ogg is cut into pieces of 200..250 ms (staticlight01..36). A piece plays, then a pause of
+    //        200..300 ms, then the next piece. It plays ALWAYS while Slenderman is in the field of view and goes on until
+    //        the sanity is back at zero.
+    /** length of one piece of static_light (ms, the files are 200..250) and the pause after it (ms). */
+    private static final long PIECE_MS = 225L;
+    private static final int PIECE_PAUSE_MIN = 200;
+    private static final int PIECE_PAUSE_RANDOM = 101;
+    private static final float LIGHT_VOLUME = 0.8F;
+    /** the stutter goes on while the sanity is not back at (almost) zero. */
+    private static final float TWITCH_END_SANITY = 0.004F;
+
+    // BEND: far away the frame twitches often and fast (about 200-270 ms of bend in every second) but weakly;
+    //       the closer he is, the deeper the bend, but the twitches get slower (longer, with longer pauses).
+    private static final float BEND_DUR_FAR = 55F, BEND_DUR_NEAR = 170F;     // ms
+    private static final float BEND_GAP_FAR = 160F, BEND_GAP_NEAR = 420F;    // ms between two bends
+    /** closeness: 0 at CLOSE_FAR blocks (or more), 1 at CLOSE_NEAR blocks (or less). */
+    private static final double CLOSE_FAR = 40.0D, CLOSE_NEAR = 3.0D;
+    /** depth of the bend: x BEND_DEPTH_FAR when far, x BEND_DEPTH_NEAR when very close. */
+    private static final float BEND_DEPTH_FAR = 0.45F, BEND_DEPTH_NEAR = 1.35F;
     /** the frame freezes in one pose for about 1 s: only when closer than this (blocks) and at this sanity loss at least ... */
     private static final double HOLD_DIST = 8.0D;
     private static final float HOLD_MIN_SANITY = 0.30F;
-    /** ... with this chance per piece, lasts 0.9..1.2 s, and then rests 2.5..6 s before the next freeze. */
-    private static final float HOLD_CHANCE = 0.05F;
+    /** ... with this chance per bend, lasts 0.9..1.2 s, and then rests 2.5..6 s before the next freeze. */
+    private static final float HOLD_CHANCE = 0.08F;
     private static final int HOLD_MS_MIN = 900;
     private static final int HOLD_MS_RANDOM = 301;
     private static final int HOLD_PAUSE_MIN = 2500;
     private static final int HOLD_PAUSE_RANDOM = 3500;
-    /** the stutter goes on while the sanity is not back at (almost) zero. */
-    private static final float TWITCH_END_SANITY = 0.004F;
-    /** gap between two pulses (ms): at sanity 0..1 it shrinks from LO0..HI0 to LO1..HI1 (full loss = 25..60 ms). */
-    private static final float PULSE_GAP_LO_0 = 120F, PULSE_GAP_HI_0 = 500F;
-    private static final float PULSE_GAP_LO_1 = 25F, PULSE_GAP_HI_1 = 60F;
-    /** the stream restarts loud every 2.0 s and fades like gain = FLOOR + (1 - FLOOR) * exp(-t / TAU). */
-    private static final long STUTTER_CYCLE_MS = 2000L;
-    private static final float STUTTER_FLOOR = 0.16F;
-    private static final float STUTTER_TAU_S = 0.6F;
-    /** breathing fades in and out in this many ticks (2 s). */
-    private static final float BREATH_RAMP_TICKS = 40F;
 
-    private static final float TWITCH_TICK_VOLUME = 0.7F;
+    // MEDIUM STATIC (staticmedium.ogg): starts quiet at about 40% sanity loss and grows, stuttering in pieces
+    // (staticmedium_p01..37, 200..250 ms, same pauses); near 50% it turns into one continuous track.
+    private static final float MEDIUM_START = 0.36F, MEDIUM_FULL = 0.50F;
+    private static final float MEDIUM_CONT_FROM = 0.46F, MEDIUM_CONT_TO = 0.52F;
+    private static final float MEDIUM_VOLUME = 0.85F;
+
+    // BREATHING: starts after 3 s of seeing him, rises in about 5 s (faster when the sanity fills faster),
+    // stays while the sanity is high, and fades in about 5 s once the sanity falls below BREATH_OFF_SANITY
+    // (so it is already quiet about 4 s before the interface is completely calm).
+    private static final int BREATH_SEEN_TICKS = 60;
+    private static final float BREATH_RISE_SLOW = 1F / 100F, BREATH_RISE_FAST = 1F / 70F, BREATH_FALL = 1F / 100F;
+    private static final float BREATH_OFF_SANITY = 0.60F;
 
     private static final int TELEPORT_GLITCH_MS = 220;
     /** Jumpscare sound on teleport when he is out of view: only 10% of the time. */
@@ -213,9 +224,11 @@ public class CameraEffects {
     /** the frame is frozen in its pose until this time, and the next freeze is allowed after holdNextMs. */
     private static long holdEndMs, holdNextMs;
     /** stutter stream: when the next pulse is due and when the current 2 s cycle started. */
-    private static long pulseNextMs, cycleStartMs;
+    private static long pulseNextMs, mediumNextMs, bendNextMs;
     /** breathing envelope 0..1 (linear, 2 s up / 2 s down). */
-    private static float breathEnv;
+    private static float breathEnv, prevSanity, midShare;
+    private static boolean breathLatch;
+    private static int breathSeenTicks;
     private static int breathDeadTicks;
 
     private static final class TickSound {
@@ -349,6 +362,8 @@ public class CameraEffects {
             heavyWait = 0;
             heavyLatched = false;
             breathEnv = 0F;
+            breathLatch = false;
+            breathSeenTicks = 0;
             syncMirrors();
             return;
         }
@@ -394,7 +409,8 @@ public class CameraEffects {
         INTENSITY.update(sanity, RISE, 1F, BREATH_FADE_TICKS);
 
         // static_mid: comes in at ~12..40% sanity and gives way to the heavy static at ~62..85%
-        float midGoal = smooth(0.12F, 0.40F, sanity) * (1F - smooth(0.62F, 0.85F, sanity));
+        float midGoal = smooth(MEDIUM_START, MEDIUM_FULL, sanity) * (1F - smooth(0.62F, 0.85F, sanity));
+        midShare = smooth(MEDIUM_CONT_FROM, MEDIUM_CONT_TO, sanity);
         MID.update(midGoal, 0.08F, 1F, MID_FADE_TICKS);
 
         float proxGoal = cam && sl != null ? 1F - (float) Mth.clamp((dist - 2.5) / 60.0, 0.0, 1.0) : 0F;
@@ -433,11 +449,21 @@ public class CameraEffects {
         if (INTENSITY.v < 0.002F) INTENSITY.kill(0F);
         syncMirrors();
 
-        // breathing: on with the first distortion, off when they are gone; 2 s fade both ways
-        boolean distorting = cam && (sanity > TWITCH_END_SANITY || HUD.v > 0.01F || FOV.v > 0.01F || seenGate > 0.02F);
-        breathEnv = Mth.clamp(breathEnv + (distorting ? 1F : -1F) / BREATH_RAMP_TICKS, 0F, 1F);
+        // breathing: starts after 3 s of seeing him, rises in ~5 s (a bit faster when the sanity fills faster),
+        // fades in ~5 s once the sanity has fallen below BREATH_OFF_SANITY (or the camera is lowered)
+        breathSeenTicks = seen ? Math.min(breathSeenTicks + 1, 200) : Math.max(breathSeenTicks - 1, 0);
+        if (breathSeenTicks >= BREATH_SEEN_TICKS) breathLatch = true;
+        if (!cam || (!seen && sanity < BREATH_OFF_SANITY)) {
+            breathLatch = false;
+            breathSeenTicks = 0;
+        }
+        float rising = Mth.clamp((sanity - prevSanity) / 0.0125F, 0F, 1F);
+        prevSanity = sanity;
+        float breathRate = breathLatch ? Mth.lerp(rising, BREATH_RISE_SLOW, BREATH_RISE_FAST) : BREATH_FALL;
+        breathEnv = Mth.clamp(breathEnv + (breathLatch ? breathRate : -breathRate), 0F, 1F);
 
         manageSounds(mc);
+        manageMediumPieces();
         manageGlitchSounds(mc, cam);
         manageGlitchLayers(mc, near);
     }
@@ -508,53 +534,31 @@ public class CameraEffects {
     }
 
     /**
-     * The stutter: the twelve twitch files (sounds.json -> "twitch_tick") are played as a stream of very short pieces.
-     * Every piece starts one of the files (a random one) and cuts it off after a moment, so the sound stutters.
+     * The stutter: pieces of static_light (200..250 ms each), a pause of 200..300 ms after every piece.
      * It runs ALWAYS while Slenderman is in the field of view and goes on until the sanity is back at zero.
-     * Gap between two pieces: 25..60 ms at full sanity loss, longer when the loss is small. Every 2 s the stream
-     * starts loud and fades (the shape measured on the reference video).
-     * Returns the cut length (ms) of a piece that started in this very call, or 0 when no piece started.
      */
-    private static long updateStutter(long now) {
+    private static void updateStutter(long now) {
         float s = Mth.clamp(sanity, 0F, 1F);
         if (!seenNow && s < TWITCH_END_SANITY) {
             pulseNextMs = 0L;
-            return 0L;
+            return;
         }
         float level = Math.max(s, 0.05F);
-        if (pulseNextMs == 0L || now - pulseNextMs > 250L) {   // (re)start, or a long hiccup: no catching up
-            cycleStartMs = now;
-            pulseNextMs = now;
-        }
-        if (now < pulseNextMs) return 0L;
-        if (now - cycleStartMs >= STUTTER_CYCLE_MS) cycleStartMs = now;
-
-        float lo = Mth.lerp(level, PULSE_GAP_LO_0, PULSE_GAP_LO_1);
-        float hi = Mth.lerp(level, PULSE_GAP_HI_0, PULSE_GAP_HI_1);
-        long gap = Math.round(lo + HUD_RNG.nextFloat() * (hi - lo));
-        long cut = Mth.clamp(Math.round(gap * PULSE_CUT_SHARE), PULSE_CUT_MIN, PULSE_CUT_MAX);
-
-        float t = (now - cycleStartMs) / 1000F;
-        float env = STUTTER_FLOOR + (1F - STUTTER_FLOOR) * (float) Math.exp(-t / STUTTER_TAU_S);
-        float vol = MASTER_VOLUME * TWITCH_TICK_VOLUME * env * (0.40F + 0.60F * level);
-        playTwitchTick(now, cut, vol);
-        pulseNextMs = now + gap;
-        return cut;
+        if (pulseNextMs == 0L || now - pulseNextMs > 400L) pulseNextMs = now;   // (re)start or a hiccup: no catching up
+        if (now < pulseNextMs) return;
+        playLightPiece(MASTER_VOLUME * LIGHT_VOLUME * (0.40F + 0.60F * level));
+        pulseNextMs = now + PIECE_MS + PIECE_PAUSE_MIN + HUD_RNG.nextInt(PIECE_PAUSE_RANDOM);
     }
 
     /**
-     * Called by CameraHud once per rendered frame. Runs the stutter stream and writes frameVertical /
-     * frameHorizontal / ...Bend.
-     *
-     * The frame (with every element of the interface) bends in the rhythm of the stutter: every piece of the
-     * stutter starts a new bent pose of the same length, then the frame is straight until the next piece.
-     * While Slenderman is close and the loss is high the frame can freeze in one pose for about 1 s, now and then.
-     * While the seen gate is closed (we do not look at him) the frame stays calm, the stutter sound goes on.
+     * Called by CameraHud once per rendered frame. Runs the stutter and writes frameVertical / frameHorizontal /
+     * ...Bend. The frame (with every element of the interface) bends in short twitches: far from him they are fast
+     * and often but weak, the closer he is the deeper and the slower they get; very close the pose can freeze for
+     * about a second now and then. While the seen gate is closed (we do not look at him) the frame stays calm.
      */
     public static void frameUpdate() {
         long now = System.currentTimeMillis();
-        stopFinishedTicks(now);
-        long cut = updateStutter(now);
+        updateStutter(now);
 
         if (tpActive()) {
             frameVertical = 34F * teleportSignX;
@@ -567,26 +571,33 @@ public class CameraEffects {
         if (seenGate < 0.02F || hudPressure < 0.01F) {
             holdEndMs = 0L;
             twitchEndMs = 0L;
+            bendNextMs = 0L;
             frameVertical = frameHorizontal = frameVerticalBend = frameHorizontalBend = 0F;
             return;
         }
 
+        float closeness = 1F - (float) Mth.clamp((slenderDist - CLOSE_NEAR) / (CLOSE_FAR - CLOSE_NEAR), 0.0, 1.0);
+
         if (now < holdEndMs) {
             twitchEndMs = holdEndMs;                // frozen in the same pose
-        } else if (cut > 0L) {
-            // a new piece of the stutter: a new bent pose of the same length
+        } else if (now >= twitchEndMs && now >= bendNextMs) {
+            long dur = Math.round(Mth.lerp(closeness, BEND_DUR_FAR, BEND_DUR_NEAR) * (0.75F + 0.5F * HUD_RNG.nextFloat()));
+            twitchEndMs = now + dur;
+            // not every twitch is strong: a third of them are weak
+            float strength = HUD_RNG.nextFloat() < 0.33F ? 0.25F + 0.30F * HUD_RNG.nextFloat() : 0.65F + 0.35F * HUD_RNG.nextFloat();
             float j = jitter(24);
-            twitchEndMs = now + cut;
-            twV = Math.signum(j == 0F ? 1F : j) * Mth.clamp(0.5F + Math.abs(j), 0.5F, 1F);
-            twVB = HUD_RNG.nextFloat() < 0.85F ? signedKick(1F) : 0F;
-            twH = HUD_RNG.nextFloat() < 0.85F ? signedKick(1F) : 0F;
-            twHB = HUD_RNG.nextFloat() < 0.85F ? signedKick(1F) : 0F;
+            twV = Math.signum(j == 0F ? 1F : j) * Mth.clamp(0.5F + Math.abs(j), 0.5F, 1F) * strength;
+            twVB = HUD_RNG.nextFloat() < 0.85F ? signedKick(strength) : 0F;
+            twH = HUD_RNG.nextFloat() < 0.85F ? signedKick(strength) : 0F;
+            twHB = HUD_RNG.nextFloat() < 0.85F ? signedKick(strength) : 0F;
+            long gap = Math.round(Mth.lerp(closeness, BEND_GAP_FAR, BEND_GAP_NEAR) * (0.70F + 0.60F * HUD_RNG.nextFloat()));
+            bendNextMs = twitchEndMs + gap;
             // too close: from time to time this pose freezes for about a second (then a pause before the next freeze)
             if (slenderDist < HOLD_DIST && sanity >= HOLD_MIN_SANITY && now >= holdNextMs
                     && HUD_RNG.nextFloat() < HOLD_CHANCE) {
-                long hold = HOLD_MS_MIN + HUD_RNG.nextInt(HOLD_MS_RANDOM);
-                holdEndMs = now + hold;
+                holdEndMs = now + HOLD_MS_MIN + HUD_RNG.nextInt(HOLD_MS_RANDOM);
                 twitchEndMs = holdEndMs;
+                bendNextMs = holdEndMs + 60L;
                 holdNextMs = holdEndMs + HOLD_PAUSE_MIN + HUD_RNG.nextInt(HOLD_PAUSE_RANDOM);
             }
         }
@@ -598,9 +609,10 @@ public class CameraEffects {
 
         float p = Mth.clamp(hudPressure, 0F, 1F);
         float fade = Mth.clamp(p / 0.12F, 0F, 1F);
+        float depth = Mth.lerp(closeness, BEND_DEPTH_FAR, BEND_DEPTH_NEAR);
 
-        float spread = (7F + 16F * p + 14F * p * p) * fade;
-        float bend = (4F + 9F * p + 9F * p * p) * fade;
+        float spread = (7F + 16F * p + 14F * p * p) * fade * depth;
+        float bend = (4F + 9F * p + 9F * p * p) * fade * depth;
 
         if (sanity > 0.80F) {
             float extra = (sanity - 0.80F) / 0.20F;
@@ -616,13 +628,18 @@ public class CameraEffects {
         frameHorizontalBend = twHB * bend * 0.90F * g;
     }
 
-    /** One tiny slice of static; it is stopped by stopFinishedTicks after 10..14 ms. */
-    private static void playTwitchTick(long now, long dur, float volume) {
-        float pitch = 0.90F + HUD_RNG.nextFloat() * 0.20F;
-        SimpleSoundInstance inst = SimpleSoundInstance.forUI(SlenderCamMod.TWITCH_TICK.get(), pitch,
-                Mth.clamp(volume, 0F, 1F));
-        Minecraft.getInstance().getSoundManager().play(inst);
-        ACTIVE_TICKS.add(new TickSound(inst, now + dur));
+    /** One piece of static_light (the sound event picks one of the 36 files at random). */
+    private static void playLightPiece(float volume) {
+        float pitch = 0.96F + HUD_RNG.nextFloat() * 0.08F;
+        Minecraft.getInstance().getSoundManager().play(SimpleSoundInstance.forUI(SlenderCamMod.STATIC_LIGHT.get(), pitch,
+                Mth.clamp(volume, 0F, 1F)));
+    }
+
+    /** One piece of staticmedium (event static_medium_piece: 37 files, 200..250 ms). */
+    private static void playMediumPiece(float volume) {
+        float pitch = 0.97F + HUD_RNG.nextFloat() * 0.06F;
+        Minecraft.getInstance().getSoundManager().play(SimpleSoundInstance.forUI(SlenderCamMod.STATIC_MEDIUM_PIECE.get(), pitch,
+                Mth.clamp(volume, 0F, 1F)));
     }
 
     /** checked every rendered frame (not only every game tick), so the sound is cut as early as the frame rate allows. */
@@ -681,8 +698,9 @@ public class CameraEffects {
         }
         @Override public boolean canStartSilent() { return true; }
         @Override public void tick() {
-            this.volume = MID.v * MASTER_VOLUME;
-            if (MID.v < 0.002F) this.stop();
+            float v = MID.v * midShare;                      // the whole track: only near 50% sanity loss
+            this.volume = Math.max(0.0001F, v * MEDIUM_VOLUME * MASTER_VOLUME);
+            if (v < 0.002F) this.stop();
         }
     }
 
@@ -713,7 +731,7 @@ public class CameraEffects {
         }
     }
 
-    /** Breathing: starts with the first distortion, ends when the distortions end; 2 s linear fade in and out. */
+    /** Breathing: see the BREATHING constants; its volume follows breathEnv (about 5 s up, about 5 s down). */
     private static class BreathingLoop extends AbstractTickableSoundInstance {
         BreathingLoop(SoundEvent ev) {
             super(ev, SoundSource.MASTER, RandomSource.create());
@@ -730,10 +748,24 @@ public class CameraEffects {
         }
     }
 
+    /** below ~50% sanity loss the medium static stutters: a piece (200..250 ms), a pause of 200..300 ms, the next piece. */
+    private static void manageMediumPieces() {
+        float vol = MID.v * (1F - midShare);
+        if (vol < 0.02F) {
+            mediumNextMs = 0L;
+            return;
+        }
+        long now = System.currentTimeMillis();
+        if (mediumNextMs == 0L || now - mediumNextMs > 400L) mediumNextMs = now;
+        if (now < mediumNextMs) return;
+        playMediumPiece(vol * MEDIUM_VOLUME * MASTER_VOLUME);
+        mediumNextMs = now + PIECE_MS + PIECE_PAUSE_MIN + HUD_RNG.nextInt(PIECE_PAUSE_RANDOM);
+    }
+
     private static void manageSounds(Minecraft mc) {
         SoundManager sm = mc.getSoundManager();
-        if (MID.v > 0.01F && (mid == null || mid.isStopped())) {
-            mid = new MidLoop(SlenderCamMod.STATIC_MID.get());
+        if (MID.v * midShare > 0.01F && (mid == null || mid.isStopped())) {
+            mid = new MidLoop(SlenderCamMod.STATIC_MEDIUM.get());
             sm.play(mid);
         }
         // breathing must never be missing while the distortions last: if the loop is gone (or the engine dropped it
