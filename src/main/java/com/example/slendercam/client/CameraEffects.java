@@ -43,7 +43,6 @@ public class CameraEffects {
         return SLENDER.equals(ForgeRegistries.ENTITY_TYPES.getKey(e.getType()));
     }
 
-    /** calls a public no-argument method of the Slenderman entity by name; null if there is no such method. */
     private static Number callNumber(Entity e, String name) {
         if (MISSING.contains(name)) return null;
         try {
@@ -61,7 +60,6 @@ public class CameraEffects {
         }
     }
 
-    /** Sanity LOSS of the player from the Slenderman mod: 0..100 -> 0..1. (An old Slenderman mod without sanity: sanity.) */
     private static float readSanity(Entity e) {
         Number n = callNumber(e, "getSanity");
         if (n != null) return Mth.clamp(n.floatValue() / 100.0F, 0F, 1F);
@@ -85,16 +83,10 @@ public class CameraEffects {
     private static final float FRENZY_SANITY = 0.65F;
     private static final float FRENZY_SHAKE = 0.85F;
 
-    /** static_heavy starts very quietly at this sanity loss (40%) and is at full strength at 70%. */
     private static final float HEAVY_START_SANITY = 0.40F;
-    /** ... when he is close (under NEAR_DIST) it starts earlier. */
     private static final float HEAVY_START_NEAR = 0.35F;
-    /** without a Slenderman on the client the sanity still falls at the server speed (100 in 14 s). */
     private static final float SANITY_FALL_NO_ENTITY = 1.0F / 280.0F;
-    /** and gets to full strength at this one. */
     private static final float HEAVY_FULL_SANITY = 0.70F;
-    private static final int HEAVY_DELAY_TICKS = 40;
-    private static final float HEAVY_NEAR_RELEASE = 0.40F;
     private static final int HEAVY_RISE_TICKS = 60;
     private static final float HEAVY_VOLUME = 1.0F;
 
@@ -111,53 +103,34 @@ public class CameraEffects {
     private static final float VIEW_SHAKE_DEG = 1.3F;
     private static final float VIEW_FOV_WOBBLE = 1.95F;
 
-    // ---- stutter (static_light), bend of the interface, medium static, breathing ----
-    // SOUND: staticlight.ogg is cut into pieces of 120..150 ms (staticlight01..59). A piece plays, then a pause of
-    //        120..180 ms, then the next piece. It plays ALWAYS while Slenderman is in the field of view and goes on until
-    //        the sanity is back at zero.
-    /** length of one piece of static_light (ms, the files are 120..150) and the pause after it (ms). */
-    private static final long PIECE_MS = 135L;
-    private static final int PIECE_PAUSE_MIN = 120;
-    private static final int PIECE_PAUSE_RANDOM = 61;
+    // ---- Звуки статики: 6-8 кусочков в секунду поочередно, без пауз, играют до конца ----
+    private static final long PIECE_MS = 135L; 
     private static final float LIGHT_VOLUME = 1.0F;
-    /** the stutter goes on while the sanity is not back at (almost) zero. */
     private static final float TWITCH_END_SANITY = 0.004F;
 
-    // BEND: far away the frame twitches often and fast (about 200-270 ms of bend in every second) but weakly;
-    //       the closer he is, the deeper the bend, but the twitches get slower (longer, with longer pauses).
-    private static final float BEND_DUR_FAR = 55F, BEND_DUR_NEAR = 170F;     // ms
-    private static final float BEND_GAP_FAR = 160F, BEND_GAP_NEAR = 420F;    // ms between two bends
-    /** closeness: 0 at CLOSE_FAR blocks (or more), 1 at CLOSE_NEAR blocks (or less). */
+    private static final float BEND_DUR_FAR = 55F, BEND_DUR_NEAR = 170F;
+    private static final float BEND_GAP_FAR = 160F, BEND_GAP_NEAR = 420F;
     private static final double CLOSE_FAR = 40.0D, CLOSE_NEAR = 3.0D;
-    /** depth of the bend: x BEND_DEPTH_FAR when far, x BEND_DEPTH_NEAR when very close. */
     private static final float BEND_DEPTH_FAR = 0.90F, BEND_DEPTH_NEAR = 1.70F;
-    /** the frame freezes in one pose for about 1 s: only when closer than this (blocks) and at this sanity loss at least ... */
     private static final double HOLD_DIST = 8.0D;
     private static final float HOLD_MIN_SANITY = 0.30F;
-    /** ... with this chance per bend, lasts 0.9..1.2 s, and then rests 2.5..6 s before the next freeze. */
     private static final float HOLD_CHANCE = 0.08F;
     private static final int HOLD_MS_MIN = 900;
     private static final int HOLD_MS_RANDOM = 301;
     private static final int HOLD_PAUSE_MIN = 2500;
     private static final int HOLD_PAUSE_RANDOM = 3500;
 
-    // MEDIUM STATIC (staticmedium.ogg): starts quiet at about 40% sanity loss and grows, stuttering in pieces
-    // (staticmedium_p01..63, 120..150 ms, pauses 120..180 ms); near 50% it turns into one continuous track.
-    private static final float MEDIUM_START = 0.36F, MEDIUM_FULL = 0.50F;
+    // MEDIUM STATIC: подключается при sanity >= 25 (0.25)
+    private static final float MEDIUM_START = 0.25F, MEDIUM_FULL = 0.50F;
     private static final float MEDIUM_CONT_FROM = 0.46F, MEDIUM_CONT_TO = 0.52F;
     private static final float MEDIUM_VOLUME = 1.0F;
 
-    // BREATHING: starts after 3 s of seeing him, rises in about 5 s (faster when the sanity fills faster),
-    // stays while the sanity is high, and fades in about 5 s once the sanity falls below BREATH_OFF_SANITY
-    // (so it is already quiet about 4 s before the interface is completely calm).
-    /** during the black screen the camera sounds die out after the echo (ticks into the black screen). */
     private static final int DEATH_CUT_TICKS = 36;
     private static final int BREATH_SEEN_TICKS = 60;
     private static final float BREATH_RISE_SLOW = 1F / 100F, BREATH_RISE_FAST = 1F / 70F, BREATH_FALL = 1F / 100F;
     private static final float BREATH_OFF_SANITY = 0.60F;
 
     private static final int TELEPORT_GLITCH_MS = 220;
-    /** Jumpscare sound on teleport when he is out of view: only 10% of the time. */
     private static final float TELEPORT_UNSEEN_CHANCE = 0.10F;
     private static final double FRONT_RANGE = 30.0D;
     private static final double FRONT_COS = 0.30D;
@@ -168,7 +141,6 @@ public class CameraEffects {
 
     private static final class Env {
         float v, peak;
-
         void update(float goal, float riseFactor, float maxRise, int fallTicks) {
             if (goal > v) {
                 v += Math.min((goal - v) * riseFactor, maxRise);
@@ -178,7 +150,6 @@ public class CameraEffects {
             }
             if (v < 0.0005F) { v = 0F; peak = 0F; }
         }
-
         void kill(float factor) {
             v *= factor;
             peak *= factor;
@@ -203,13 +174,10 @@ public class CameraEffects {
     private static float proxVol;
     private static float sanity;
     private static boolean seenNow;
-    /** distance to the nearest Slenderman on the client (blocks), 1e9 when there is none. */
     private static double slenderDist = 1.0E9D;
     private static float rawSanity;
     private static UUID tpUuid;
     private static int tpSeq;
-    private static int heavyWait;
-    private static boolean heavyLatched;
     private static float seenGate;
 
     private static final RandomSource HUD_RNG = RandomSource.create();
@@ -221,33 +189,15 @@ public class CameraEffects {
     private static float frameHorizontalBend;
 
     private static float twV, twVB, twH, twHB;
-    /** When the current bend of the frame ends. */
     private static long twitchEndMs;
-    /** the frame is frozen in its pose until this time, and the next freeze is allowed after holdNextMs. */
     private static long holdEndMs, holdNextMs;
-    /** stutter stream: when the next pulse is due and when the current 2 s cycle started. */
     private static long pulseNextMs, mediumNextMs, bendNextMs;
-    /** breathing envelope 0..1 (linear, 2 s up / 2 s down). */
     private static float breathEnv, prevSanity, midShare;
     private static boolean breathLatch;
-    /** death scene of the Slenderman mod (read by reflection): 0 none, 1 the view turns to his face, 2 black screen. */
     private static int deathPhase, deathBlackTicks;
-    /** loops that were started: used to notice a loop the sound engine dropped (e.g. after SoundManager.stop()). */
     private static final java.util.Map<SoundInstance, Long> STARTED = new java.util.IdentityHashMap<>();
     private static float noEntityRate;
     private static int breathSeenTicks;
-
-    private static final class TickSound {
-        final SimpleSoundInstance inst;
-        final long endMs;
-
-        TickSound(SimpleSoundInstance inst, long endMs) {
-            this.inst = inst;
-            this.endMs = endMs;
-        }
-    }
-
-    private static final List<TickSound> ACTIVE_TICKS = new ArrayList<>();
 
     private static long teleportGlitchEndMs;
     private static float teleportSignX = 1F, teleportSignY = 1F;
@@ -261,7 +211,6 @@ public class CameraEffects {
 
     private static final GlitchLoop[] GLITCH = new GlitchLoop[5];
     private static final float[] GLITCH_GAIN = new float[5];
-    /** which of the two strongest layers (3 or 4) is the main one, when it flips next, and the tail after the big static. */
     private static int topChoice = 3, topSwitchTicks, topTailTicks;
     private static boolean topWasOn;
     private static int heavyTicks;
@@ -270,7 +219,6 @@ public class CameraEffects {
 
     public static float intensity() { return intensity; }
     public static float sanity() { return sanity; }
-    /** kept for other classes of the camera mod that still call aggression(): it is the sanity now. */
     public static float aggression() { return sanity; }
     public static float flash() { return flash; }
     public static float zoom(float pt) { return Mth.lerp(pt, zoomPrev, zoomNow); }
@@ -289,24 +237,6 @@ public class CameraEffects {
     public static float teleportGlitch() { return tpActive() ? 1F : 0F; }
     public static float teleportSignX() { return teleportSignX; }
     public static float teleportSignY() { return teleportSignY; }
-
-    public static float frameWarpX(float x, float y) {
-        float t = Mth.clamp((y - 21F) / (383F - 21F), 0F, 1F);
-        float wave = (float) Math.sin(Math.PI * t);
-        float leftShift = frameVertical + frameVerticalBend * wave;
-        float rightShift = -frameVertical - frameVerticalBend * wave;
-        float n = Mth.clamp(x / 739F, 0F, 1F);
-        return Mth.lerp(n, leftShift, rightShift);
-    }
-
-    public static float frameWarpY(float x, float y) {
-        float t = Mth.clamp((x - 19F) / (739F - 43F), 0F, 1F);
-        float wave = (float) Math.sin(Math.PI * t);
-        float topShift = frameHorizontal + frameHorizontalBend * wave;
-        float bottomShift = -frameHorizontal - frameHorizontalBend * wave;
-        float n = Mth.clamp(y / 415F, 0F, 1F);
-        return Mth.lerp(n, topShift, bottomShift);
-    }
 
     public static float noise(int seed) {
         long now = System.currentTimeMillis();
@@ -365,8 +295,6 @@ public class CameraEffects {
             rawSanity = 0F;
             seenNow = false;
             seenGate = 0F;
-            heavyWait = 0;
-            heavyLatched = false;
             breathEnv = 0F;
             breathLatch = false;
             breathSeenTicks = 0;
@@ -383,8 +311,6 @@ public class CameraEffects {
             }
         }
 
-        // death scene of the Slenderman mod: while the view turns to his face (3 s) every sound has to reach its
-        // maximum quickly; during the black screen the camera sounds die out together with the echo
         int dp = 0;
         if (sl != null) {
             Number dn = callNumber(sl, "getDeathPhase");
@@ -407,43 +333,36 @@ public class CameraEffects {
             checkTeleport(mc, sl, dist, cam);
         } else {
             lastId = null;
-            // he is not on the client (parked far away): the sanity keeps coming back at the server speed
-            if (noEntityRate <= 0F) noEntityRate = rawSanity / ((10F + 5F * rawSanity) * 20F);   // same speed as on the server
+            if (noEntityRate <= 0F) noEntityRate = rawSanity / ((10F + 5F * rawSanity) * 20F);
             rawSanity = Math.max(0F, rawSanity - noEntityRate);
         }
         seenNow = seen;
 
-        // seen gate: rises quickly when we look at him, falls slowly when we turn away.
         float seenGoal = seen ? 1F : 0F;
         seenGate += (seenGoal - seenGate) * (seen ? 0.45F : 0.06F);
         if (seenGate < 0.001F) seenGate = 0F;
 
-        // sanity 0..1 follows the value of the Slenderman mod (it already depends on distance and stare time)
         float rawForCam = cam ? rawSanity : 0F;
         sanity += (rawForCam - sanity) * 0.30F;
         if (sanity < 0.001F) sanity = 0F;
 
         boolean near = cam && sl != null && dist < NEAR_DIST;
 
-        // grain and breathing
         INTENSITY.update(sanity, RISE, 1F, BREATH_FADE_TICKS);
 
-        // static_mid: comes in at ~12..40% sanity and gives way to the heavy static at ~62..85%
-        float midGoal = smooth(MEDIUM_START, MEDIUM_FULL, sanity);   // goes on while the loss is high; only static_light lasts to the very end
+        float midGoal = smooth(MEDIUM_START, MEDIUM_FULL, sanity);
         midShare = smooth(MEDIUM_CONT_FROM, MEDIUM_CONT_TO, sanity);
         MID.update(midGoal, turn ? 0.25F : 0.08F, 1F, MID_FADE_TICKS);
 
         float proxGoal = cam && sl != null ? 1F - (float) Mth.clamp((dist - 2.5) / 60.0, 0.0, 1.0) : 0F;
         PROX.update(proxGoal, 0.10F, 1F, HUD_FADE_TICKS + FOV_LAG_TICKS);
 
-        // static_heavy: grows with the sanity loss, and earlier when he is close
         float heavyGoal = smooth(HEAVY_START_SANITY, HEAVY_FULL_SANITY, sanity);
-        HEAVY.update(heavyGoal, 0.35F, turn ? 1F / 30F : 1F / HEAVY_RISE_TICKS, SOUND_FADE_TICKS);   // during the 3 s turn: full in ~1.5 s
+        HEAVY.update(heavyGoal, 0.35F, turn ? 1F / 30F : 1F / HEAVY_RISE_TICKS, SOUND_FADE_TICKS);
 
-        // shake of the picture / bending of the frame: as strong as the sanity loss (a tiny bit when just seen)
         float shakeTarget = 0F;
         if (cam) {
-            boolean frenzy = near && sanity > FRENZY_SANITY;     // very close and high loss: strong shake at once
+            boolean frenzy = near && sanity > FRENZY_SANITY;
             shakeTarget = frenzy ? Math.max(sanity, FRENZY_SHAKE) : sanity;
             if (seen) shakeTarget = Math.max(shakeTarget, SEEN_SHAKE);
         }
@@ -463,14 +382,10 @@ public class CameraEffects {
             PROX.kill(0.72F);
             Arrays.fill(SHAKE_DELAY, 0F);
             seenGate *= 0.7F;
-            heavyWait = 0;
-            heavyLatched = false;
         }
         if (INTENSITY.v < 0.002F) INTENSITY.kill(0F);
         syncMirrors();
 
-        // breathing: starts after 3 s of seeing him, rises in ~5 s (a bit faster when the sanity fills faster),
-        // fades in ~5 s once the sanity has fallen below BREATH_OFF_SANITY (or the camera is lowered)
         breathSeenTicks = seen ? Math.min(breathSeenTicks + 1, 200) : Math.max(breathSeenTicks - 1, 0);
         if (breathSeenTicks >= BREATH_SEEN_TICKS) breathLatch = true;
         if (!cam || (!seen && sanity < BREATH_OFF_SANITY)) {
@@ -479,7 +394,7 @@ public class CameraEffects {
         }
         float rising = Mth.clamp((sanity - prevSanity) / 0.0125F, 0F, 1F);
         prevSanity = sanity;
-        if (turn) breathLatch = true;                       // the turn to his face: breathing comes in at once
+        if (turn) breathLatch = true;
         float breathRate = breathLatch ? (turn ? 1F / 50F : Mth.lerp(rising, BREATH_RISE_SLOW, BREATH_RISE_FAST)) : BREATH_FALL;
         breathEnv = Mth.clamp(breathEnv + (breathLatch ? breathRate : -breathRate), 0F, 1F);
 
@@ -496,12 +411,6 @@ public class CameraEffects {
         proxVol = PROX.v;
     }
 
-    /**
-     * The Slenderman mod puts a "teleport cue" into his synced data at every real jump (together with the
-     * information whether it happened in the view of the player / in front of him), so no jump is lost, even
-     * when he was far away or was not on the client before. Old Slenderman mod without the cue: the jump is
-     * recognised by his position, as before.
-     */
     private static void checkTeleport(Minecraft mc, Entity sl, double dist, boolean cam) {
         UUID id = sl.getUUID();
         Number cue = callNumber(sl, "getTeleportCue");
@@ -511,7 +420,7 @@ public class CameraEffects {
             int flags = v & 3;
             if (!id.equals(tpUuid)) {
                 tpUuid = id;
-                tpSeq = seq;                    // a sound that was started before we saw him is not replayed
+                tpSeq = seq;
             } else if (seq != tpSeq) {
                 tpSeq = seq;
                 if (cam) onTeleport(mc, flags);
@@ -540,10 +449,6 @@ public class CameraEffects {
         }
     }
 
-    /**
-     * He just jumped. In the view of the player or in front of him: the jumpscare sound and the glitch ALWAYS
-     * come (one decision for both); out of view only 10% of the time.
-     */
     private static void onTeleport(Minecraft mc, int flags) {
         boolean distort = flags != 0 || HUD_RNG.nextFloat() < TELEPORT_UNSEEN_CHANCE;
         if (!distort) return;
@@ -553,9 +458,8 @@ public class CameraEffects {
         mc.getSoundManager().play(SimpleSoundInstance.forUI(SlenderCamMod.TELEPORT.get(), 1.0F, 1.0F));
     }
 
-    /**
-     * The stutter: pieces of static_light (120..150 ms each), a pause of 120..180 ms after every piece.
-     * It runs ALWAYS while Slenderman is in the field of view and goes on until the sanity is back at zero.
+    /** 
+     * Обновление stutter (static_light): 6-8 кусочков в секунду поочередно, без пауз (интервал ~135-150мс).
      */
     private static void updateStutter(long now) {
         float s = Mth.clamp(sanity, 0F, 1F);
@@ -564,18 +468,13 @@ public class CameraEffects {
             return;
         }
         float level = Math.max(s, 0.05F);
-        if (pulseNextMs == 0L || now - pulseNextMs > 400L) pulseNextMs = now;   // (re)start or a hiccup: no catching up
+        if (pulseNextMs == 0L || now - pulseNextMs > 400L) pulseNextMs = now;
         if (now < pulseNextMs) return;
         playLightPiece(LIGHT_VOLUME * (0.55F + 0.45F * level));
-        pulseNextMs = now + PIECE_MS + PIECE_PAUSE_MIN + HUD_RNG.nextInt(PIECE_PAUSE_RANDOM);
+        // 6-8 кусочков в секунду -> интервал между запусками примерно 130-160 мс, без пауз
+        pulseNextMs = now + 120L + HUD_RNG.nextInt(35);
     }
 
-    /**
-     * Called by CameraHud once per rendered frame. Runs the stutter and writes frameVertical / frameHorizontal /
-     * ...Bend. The frame (with every element of the interface) bends in short twitches: far from him they are fast
-     * and often but weak, the closer he is the deeper and the slower they get; very close the pose can freeze for
-     * about a second now and then. While the seen gate is closed (we do not look at him) the frame stays calm.
-     */
     public static void frameUpdate() {
         long now = System.currentTimeMillis();
         updateStutter(now);
@@ -588,7 +487,8 @@ public class CameraEffects {
             return;
         }
 
-        if (seenGate < 0.02F || hudPressure < 0.01F) {
+        // Если sanity >= 0.40 (40+), рамка НЕ гнется синхронно под static_light (возвращаем к стабильной версии)
+        if (sanity >= 0.40F || seenGate < 0.02F || hudPressure < 0.01F) {
             holdEndMs = 0L;
             twitchEndMs = 0L;
             bendNextMs = 0L;
@@ -599,11 +499,10 @@ public class CameraEffects {
         float closeness = 1F - (float) Mth.clamp((slenderDist - CLOSE_NEAR) / (CLOSE_FAR - CLOSE_NEAR), 0.0, 1.0);
 
         if (now < holdEndMs) {
-            twitchEndMs = holdEndMs;                // frozen in the same pose
+            twitchEndMs = holdEndMs;
         } else if (now >= twitchEndMs && now >= bendNextMs) {
             long dur = Math.round(Mth.lerp(closeness, BEND_DUR_FAR, BEND_DUR_NEAR) * (0.75F + 0.5F * HUD_RNG.nextFloat()));
             twitchEndMs = now + dur;
-            // not every twitch is strong: a third of them are weak
             float strength = HUD_RNG.nextFloat() < 0.33F ? 0.25F + 0.30F * HUD_RNG.nextFloat() : 0.65F + 0.35F * HUD_RNG.nextFloat();
             float j = jitter(24);
             twV = Math.signum(j == 0F ? 1F : j) * Mth.clamp(0.5F + Math.abs(j), 0.5F, 1F) * strength;
@@ -612,7 +511,6 @@ public class CameraEffects {
             twHB = HUD_RNG.nextFloat() < 0.85F ? signedKick(strength) : 0F;
             long gap = Math.round(Mth.lerp(closeness, BEND_GAP_FAR, BEND_GAP_NEAR) * (0.70F + 0.60F * HUD_RNG.nextFloat()));
             bendNextMs = twitchEndMs + gap;
-            // too close: from time to time this pose freezes for about a second (then a pause before the next freeze)
             if (slenderDist < HOLD_DIST && sanity >= HOLD_MIN_SANITY && now >= holdNextMs
                     && HUD_RNG.nextFloat() < HOLD_CHANCE) {
                 holdEndMs = now + HOLD_MS_MIN + HUD_RNG.nextInt(HOLD_MS_RANDOM);
@@ -634,12 +532,6 @@ public class CameraEffects {
         float spread = (7F + 16F * p + 14F * p * p) * fade * depth;
         float bend = (4F + 9F * p + 9F * p * p) * fade * depth;
 
-        if (sanity > 0.80F) {
-            float extra = (sanity - 0.80F) / 0.20F;
-            spread *= 1F + 0.60F * extra;
-            bend   *= 1F + 0.80F * extra;
-        }
-
         float g = Mth.clamp(seenGate, 0F, 1F);
 
         frameVertical = twV * spread * g;
@@ -648,27 +540,24 @@ public class CameraEffects {
         frameHorizontalBend = twHB * bend * 0.90F * g;
     }
 
-    /** One piece of static_light (the sound event picks one of the 59 files at random). */
     private static void playLightPiece(float volume) {
         float pitch = 0.96F + HUD_RNG.nextFloat() * 0.08F;
         Minecraft.getInstance().getSoundManager().play(SimpleSoundInstance.forUI(SlenderCamMod.STATIC_LIGHT.get(), pitch,
                 Mth.clamp(volume, 0F, 1F)));
     }
 
-    /** One piece of staticmedium (event static_medium_piece: 63 files, 120..150 ms). */
     private static void playMediumPiece(float volume) {
         float pitch = 0.97F + HUD_RNG.nextFloat() * 0.06F;
         Minecraft.getInstance().getSoundManager().play(SimpleSoundInstance.forUI(SlenderCamMod.STATIC_MEDIUM_PIECE.get(), pitch,
                 Mth.clamp(volume, 0F, 1F)));
     }
 
-    /** checked every rendered frame (not only every game tick), so the sound is cut as early as the frame rate allows. */
     @SubscribeEvent
     public static void onRenderTick(TickEvent.RenderTickEvent e) {
         if (e.phase != TickEvent.Phase.START) return;
         stopFinishedTicks(System.currentTimeMillis());
         Minecraft mc = Minecraft.getInstance();
-        if (mc.player != null && mc.level != null) manageMediumPieces();   // every frame: the pieces are only 120-150 ms long
+        if (mc.player != null && mc.level != null) manageMediumPieces();
     }
 
     private static void stopFinishedTicks(long now) {
@@ -712,7 +601,6 @@ public class CameraEffects {
         return t * t * (3F - 2F * t);
     }
 
-    // ---- loops ----
     private static class MidLoop extends AbstractTickableSoundInstance {
         MidLoop(SoundEvent ev) {
             super(ev, SoundSource.MASTER, RandomSource.create());
@@ -721,7 +609,7 @@ public class CameraEffects {
         }
         @Override public boolean canStartSilent() { return true; }
         @Override public void tick() {
-            float v = MID.v * midShare;                      // the whole track: only near 50% sanity loss
+            float v = MID.v * midShare;
             this.volume = Math.max(0.0001F, v * MEDIUM_VOLUME);
             if (v < 0.002F) this.stop();
         }
@@ -754,7 +642,6 @@ public class CameraEffects {
         }
     }
 
-    /** Breathing: see the BREATHING constants; its volume follows breathEnv (about 5 s up, about 5 s down). */
     private static class BreathingLoop extends AbstractTickableSoundInstance {
         BreathingLoop(SoundEvent ev) {
             super(ev, SoundSource.MASTER, RandomSource.create());
@@ -771,7 +658,9 @@ public class CameraEffects {
         }
     }
 
-    /** below ~50% sanity loss the medium static stutters: a piece (120..150 ms), a pause of 120..180 ms, the next piece. */
+    /** 
+     * Medium static: также играет по 6-8 кусочков в секунду поочередно при sanity >= 25 (0.25).
+     */
     private static void manageMediumPieces() {
         float vol = MID.v * (1F - midShare);
         if (vol < 0.02F) {
@@ -782,20 +671,15 @@ public class CameraEffects {
         if (mediumNextMs == 0L || now - mediumNextMs > 400L) mediumNextMs = now;
         if (now < mediumNextMs) return;
         playMediumPiece(vol * MEDIUM_VOLUME);
-        mediumNextMs = now + PIECE_MS + PIECE_PAUSE_MIN + HUD_RNG.nextInt(PIECE_PAUSE_RANDOM);
+        mediumNextMs = now + 120L + HUD_RNG.nextInt(35);
     }
 
-    /**
-     * True when a loop has to be (re)started: it was never started, it stopped itself, or the sound engine dropped it
-     * (SoundManager.stop() - for example in a death scene - kills every sound but does NOT mark the instances as
-     * stopped, so "isStopped()" alone would never notice and the loop would stay silent for the rest of the game).
-     */
     private static boolean needsStart(SoundManager sm, SoundInstance inst) {
         if (inst == null) return true;
         if (inst instanceof AbstractTickableSoundInstance t && t.isStopped()) return true;
         Long started = STARTED.get(inst);
         if (started == null) return false;
-        if (System.currentTimeMillis() - started < 600L) return false;   // it has just been started: give the engine time
+        if (System.currentTimeMillis() - started < 600L) return false;
         if (sm.isActive(inst)) return false;
         sm.stop(inst);
         return true;
@@ -813,7 +697,6 @@ public class CameraEffects {
             mid = new MidLoop(SlenderCamMod.STATIC_MEDIUM.get());
             startLoop(sm, mid);
         }
-        // breathing must never be missing while the distortions last
         if (breathEnv > 0.001F && needsStart(sm, breathingLoop)) {
             breathingLoop = new BreathingLoop(SlenderCamMod.BREATHING.get());
             startLoop(sm, breathingLoop);
@@ -850,51 +733,42 @@ public class CameraEffects {
     }
 
     /**
-     * The staticglitch loops on top of the big static. Only ONE of them is the "main" layer at a time; when
-     * another one takes over, the old one is cut off in a quarter of a second.
-     *  layer 1 - weakest: starts early and grows together with the big static;
-     *  layer 2 - takes over 4-6 s after the big static started, full strength at once; it is also the
-     *            background when he is not close any more (sometimes layer 1 replaces it for a moment);
-     *  layers 3 and 4 - the strongest pair: they NEVER play together. While he is close and the interference is
-     *            very strong (also a little before the big static, and for 3-5 s after it is gone) one of them
-     *            plays; every 4-9 s the other one interrupts it, so they take turns.
-     * When he is not close any more and the tail is over, layers 3 / 4 are cut at once.
+     * static_glitch3 и static_glitch4 начинают задействоваться, когда sanity достигает 45-50 (0.45 - 0.50).
      */
     private static void manageGlitchLayers(Minecraft mc, boolean near) {
         SoundManager sm = mc.getSoundManager();
         float h = heavyVol;
 
         if (h > 0.03F) {
-            if (heavyTicks == 0) g2StartTicks = 80 + HUD_RNG.nextInt(41);   // 4-6 s
+            if (heavyTicks == 0) g2StartTicks = 80 + HUD_RNG.nextInt(41);
             heavyTicks++;
         } else {
             heavyTicks = 0;
         }
 
-        // the strongest pair: zone = close and very strong (or a little before the big static), plus a 3-5 s tail
-        boolean zone = near && (h > 0.70F || sanity >= 0.55F);
+        // Подключаем слои 3 и 4, когда sanity в диапазоне 0.45 - 0.50+ или рядом со Слендером
+        boolean zone = near && (h > 0.70F || sanity >= 0.45F);
         if (zone) {
-            topTailTicks = 60 + HUD_RNG.nextInt(41);          // 3-5 s after the zone ends
+            topTailTicks = 60 + HUD_RNG.nextInt(41);
         } else if (topTailTicks > 0 && h < 0.03F) {
             topTailTicks--;
         } else if (h >= 0.03F) {
-            topTailTicks = Math.max(topTailTicks, 1);          // the big static is still audible: keep waiting
+            topTailTicks = Math.max(topTailTicks, 1);
         }
         boolean topOn = zone || (topWasOn && topTailTicks > 0);
         if (topOn && !topWasOn) {
             topChoice = HUD_RNG.nextBoolean() ? 3 : 4;
-            topSwitchTicks = 80 + HUD_RNG.nextInt(101);        // 4-9 s
+            topSwitchTicks = 80 + HUD_RNG.nextInt(101);
         } else if (topOn && --topSwitchTicks <= 0) {
-            topChoice = topChoice == 3 ? 4 : 3;                // the other one interrupts
+            topChoice = topChoice == 3 ? 4 : 3;
             topSwitchTicks = 80 + HUD_RNG.nextInt(101);
         }
         topWasOn = topOn;
 
-        // layers 1 and 2 reach silence about 2 s (h = 0.068) before the big static is gone
         float early = smooth(0.068F, 0.20F, h);
 
         int want = 0;
-        if (topOn) {
+        if (topOn && sanity >= 0.45F) { // Запуск glitch3/glitch4 при sanity 45-50+
             want = topChoice;
         } else if (early > 0F) {
             if (heavyTicks >= g2StartTicks || lastMode >= 2) want = 2;
@@ -920,10 +794,10 @@ public class CameraEffects {
             float goal = want == i ? level[i] : 0F;
             float g = GLITCH_GAIN[i];
             if (goal > g) {
-                float up = i == 1 ? 0.04F : 0.35F;       // layer 1 grows, the others play at once
+                float up = i == 1 ? 0.04F : 0.35F;
                 g = Math.min(goal, g + up);
             } else {
-                g = Math.max(goal, g - 0.20F);           // cut off in about a quarter of a second
+                g = Math.max(goal, g - 0.20F);
             }
             GLITCH_GAIN[i] = g;
 
@@ -941,8 +815,7 @@ public class CameraEffects {
         if (mc.player == null) return;
 
         long now = System.currentTimeMillis();
-        float bobX;
-        float bobY;
+        float bobX, bobY;
 
         if (mc.player.isSprinting()) {
             bobX = (float) Math.sin(now * 0.008) * 1.8F;
