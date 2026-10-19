@@ -85,14 +85,14 @@ public class CameraEffects {
     private static final float FRENZY_SANITY = 0.65F;
     private static final float FRENZY_SHAKE = 0.85F;
 
-    /** static_heavy starts to rise at this sanity loss (60%) and is at full strength at 100%. */
-    private static final float HEAVY_START_SANITY = 0.60F;
+    /** static_heavy starts very quietly at this sanity loss (40%) and is at full strength at 70%. */
+    private static final float HEAVY_START_SANITY = 0.40F;
     /** ... when he is close (under NEAR_DIST) it starts earlier. */
     private static final float HEAVY_START_NEAR = 0.35F;
     /** without a Slenderman on the client the sanity still falls at the server speed (100 in 14 s). */
     private static final float SANITY_FALL_NO_ENTITY = 1.0F / 280.0F;
     /** and gets to full strength at this one. */
-    private static final float HEAVY_FULL_SANITY = 1.0F;
+    private static final float HEAVY_FULL_SANITY = 0.70F;
     private static final int HEAVY_DELAY_TICKS = 40;
     private static final float HEAVY_NEAR_RELEASE = 0.40F;
     private static final int HEAVY_RISE_TICKS = 60;
@@ -112,14 +112,14 @@ public class CameraEffects {
     private static final float VIEW_FOV_WOBBLE = 1.95F;
 
     // ---- stutter (static_light), bend of the interface, medium static, breathing ----
-    // SOUND: staticlight.ogg is cut into pieces of 200..250 ms (staticlight01..36). A piece plays, then a pause of
-    //        200..300 ms, then the next piece. It plays ALWAYS while Slenderman is in the field of view and goes on until
+    // SOUND: staticlight.ogg is cut into pieces of 120..150 ms (staticlight01..59). A piece plays, then a pause of
+    //        120..180 ms, then the next piece. It plays ALWAYS while Slenderman is in the field of view and goes on until
     //        the sanity is back at zero.
-    /** length of one piece of static_light (ms, the files are 200..250) and the pause after it (ms). */
-    private static final long PIECE_MS = 225L;
-    private static final int PIECE_PAUSE_MIN = 200;
-    private static final int PIECE_PAUSE_RANDOM = 101;
-    private static final float LIGHT_VOLUME = 0.8F;
+    /** length of one piece of static_light (ms, the files are 120..150) and the pause after it (ms). */
+    private static final long PIECE_MS = 135L;
+    private static final int PIECE_PAUSE_MIN = 120;
+    private static final int PIECE_PAUSE_RANDOM = 61;
+    private static final float LIGHT_VOLUME = 1.0F;
     /** the stutter goes on while the sanity is not back at (almost) zero. */
     private static final float TWITCH_END_SANITY = 0.004F;
 
@@ -130,7 +130,7 @@ public class CameraEffects {
     /** closeness: 0 at CLOSE_FAR blocks (or more), 1 at CLOSE_NEAR blocks (or less). */
     private static final double CLOSE_FAR = 40.0D, CLOSE_NEAR = 3.0D;
     /** depth of the bend: x BEND_DEPTH_FAR when far, x BEND_DEPTH_NEAR when very close. */
-    private static final float BEND_DEPTH_FAR = 0.45F, BEND_DEPTH_NEAR = 1.35F;
+    private static final float BEND_DEPTH_FAR = 0.90F, BEND_DEPTH_NEAR = 1.70F;
     /** the frame freezes in one pose for about 1 s: only when closer than this (blocks) and at this sanity loss at least ... */
     private static final double HOLD_DIST = 8.0D;
     private static final float HOLD_MIN_SANITY = 0.30F;
@@ -142,10 +142,10 @@ public class CameraEffects {
     private static final int HOLD_PAUSE_RANDOM = 3500;
 
     // MEDIUM STATIC (staticmedium.ogg): starts quiet at about 40% sanity loss and grows, stuttering in pieces
-    // (staticmedium_p01..37, 200..250 ms, same pauses); near 50% it turns into one continuous track.
+    // (staticmedium_p01..63, 120..150 ms, pauses 120..180 ms); near 50% it turns into one continuous track.
     private static final float MEDIUM_START = 0.36F, MEDIUM_FULL = 0.50F;
     private static final float MEDIUM_CONT_FROM = 0.46F, MEDIUM_CONT_TO = 0.52F;
-    private static final float MEDIUM_VOLUME = 0.85F;
+    private static final float MEDIUM_VOLUME = 1.0F;
 
     // BREATHING: starts after 3 s of seeing him, rises in about 5 s (faster when the sanity fills faster),
     // stays while the sanity is high, and fades in about 5 s once the sanity falls below BREATH_OFF_SANITY
@@ -228,6 +228,7 @@ public class CameraEffects {
     /** breathing envelope 0..1 (linear, 2 s up / 2 s down). */
     private static float breathEnv, prevSanity, midShare;
     private static boolean breathLatch;
+    private static float noEntityRate;
     private static int breathSeenTicks;
     private static int breathDeadTicks;
 
@@ -385,11 +386,13 @@ public class CameraEffects {
             slenderDist = dist;
             seen = cam && dist < SEEN_RANGE && isLookingAt(mc.player, sl);
             rawSanity = readSanity(sl);
+            noEntityRate = 0F;
             checkTeleport(mc, sl, dist, cam);
         } else {
             lastId = null;
             // he is not on the client (parked far away): the sanity keeps coming back at the server speed
-            rawSanity = Math.max(0F, rawSanity - SANITY_FALL_NO_ENTITY);
+            if (noEntityRate <= 0F) noEntityRate = rawSanity / ((10F + 5F * rawSanity) * 20F);   // same speed as on the server
+            rawSanity = Math.max(0F, rawSanity - noEntityRate);
         }
         seenNow = seen;
 
@@ -409,7 +412,7 @@ public class CameraEffects {
         INTENSITY.update(sanity, RISE, 1F, BREATH_FADE_TICKS);
 
         // static_mid: comes in at ~12..40% sanity and gives way to the heavy static at ~62..85%
-        float midGoal = smooth(MEDIUM_START, MEDIUM_FULL, sanity) * (1F - smooth(0.62F, 0.85F, sanity));
+        float midGoal = smooth(MEDIUM_START, MEDIUM_FULL, sanity);   // goes on while the loss is high; only static_light lasts to the very end
         midShare = smooth(MEDIUM_CONT_FROM, MEDIUM_CONT_TO, sanity);
         MID.update(midGoal, 0.08F, 1F, MID_FADE_TICKS);
 
@@ -463,7 +466,6 @@ public class CameraEffects {
         breathEnv = Mth.clamp(breathEnv + (breathLatch ? breathRate : -breathRate), 0F, 1F);
 
         manageSounds(mc);
-        manageMediumPieces();
         manageGlitchSounds(mc, cam);
         manageGlitchLayers(mc, near);
     }
@@ -534,7 +536,7 @@ public class CameraEffects {
     }
 
     /**
-     * The stutter: pieces of static_light (200..250 ms each), a pause of 200..300 ms after every piece.
+     * The stutter: pieces of static_light (120..150 ms each), a pause of 120..180 ms after every piece.
      * It runs ALWAYS while Slenderman is in the field of view and goes on until the sanity is back at zero.
      */
     private static void updateStutter(long now) {
@@ -546,7 +548,7 @@ public class CameraEffects {
         float level = Math.max(s, 0.05F);
         if (pulseNextMs == 0L || now - pulseNextMs > 400L) pulseNextMs = now;   // (re)start or a hiccup: no catching up
         if (now < pulseNextMs) return;
-        playLightPiece(MASTER_VOLUME * LIGHT_VOLUME * (0.40F + 0.60F * level));
+        playLightPiece(LIGHT_VOLUME * (0.55F + 0.45F * level));
         pulseNextMs = now + PIECE_MS + PIECE_PAUSE_MIN + HUD_RNG.nextInt(PIECE_PAUSE_RANDOM);
     }
 
@@ -628,14 +630,14 @@ public class CameraEffects {
         frameHorizontalBend = twHB * bend * 0.90F * g;
     }
 
-    /** One piece of static_light (the sound event picks one of the 36 files at random). */
+    /** One piece of static_light (the sound event picks one of the 59 files at random). */
     private static void playLightPiece(float volume) {
         float pitch = 0.96F + HUD_RNG.nextFloat() * 0.08F;
         Minecraft.getInstance().getSoundManager().play(SimpleSoundInstance.forUI(SlenderCamMod.STATIC_LIGHT.get(), pitch,
                 Mth.clamp(volume, 0F, 1F)));
     }
 
-    /** One piece of staticmedium (event static_medium_piece: 37 files, 200..250 ms). */
+    /** One piece of staticmedium (event static_medium_piece: 63 files, 120..150 ms). */
     private static void playMediumPiece(float volume) {
         float pitch = 0.97F + HUD_RNG.nextFloat() * 0.06F;
         Minecraft.getInstance().getSoundManager().play(SimpleSoundInstance.forUI(SlenderCamMod.STATIC_MEDIUM_PIECE.get(), pitch,
@@ -645,7 +647,10 @@ public class CameraEffects {
     /** checked every rendered frame (not only every game tick), so the sound is cut as early as the frame rate allows. */
     @SubscribeEvent
     public static void onRenderTick(TickEvent.RenderTickEvent e) {
-        if (e.phase == TickEvent.Phase.START) stopFinishedTicks(System.currentTimeMillis());
+        if (e.phase != TickEvent.Phase.START) return;
+        stopFinishedTicks(System.currentTimeMillis());
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.player != null && mc.level != null) manageMediumPieces();   // every frame: the pieces are only 120-150 ms long
     }
 
     private static void stopFinishedTicks(long now) {
@@ -699,7 +704,7 @@ public class CameraEffects {
         @Override public boolean canStartSilent() { return true; }
         @Override public void tick() {
             float v = MID.v * midShare;                      // the whole track: only near 50% sanity loss
-            this.volume = Math.max(0.0001F, v * MEDIUM_VOLUME * MASTER_VOLUME);
+            this.volume = Math.max(0.0001F, v * MEDIUM_VOLUME);
             if (v < 0.002F) this.stop();
         }
     }
@@ -748,7 +753,7 @@ public class CameraEffects {
         }
     }
 
-    /** below ~50% sanity loss the medium static stutters: a piece (200..250 ms), a pause of 200..300 ms, the next piece. */
+    /** below ~50% sanity loss the medium static stutters: a piece (120..150 ms), a pause of 120..180 ms, the next piece. */
     private static void manageMediumPieces() {
         float vol = MID.v * (1F - midShare);
         if (vol < 0.02F) {
@@ -758,7 +763,7 @@ public class CameraEffects {
         long now = System.currentTimeMillis();
         if (mediumNextMs == 0L || now - mediumNextMs > 400L) mediumNextMs = now;
         if (now < mediumNextMs) return;
-        playMediumPiece(vol * MEDIUM_VOLUME * MASTER_VOLUME);
+        playMediumPiece(vol * MEDIUM_VOLUME);
         mediumNextMs = now + PIECE_MS + PIECE_PAUSE_MIN + HUD_RNG.nextInt(PIECE_PAUSE_RANDOM);
     }
 
