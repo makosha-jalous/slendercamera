@@ -150,6 +150,8 @@ public class CameraEffects {
     // BREATHING: starts after 3 s of seeing him, rises in about 5 s (faster when the sanity fills faster),
     // stays while the sanity is high, and fades in about 5 s once the sanity falls below BREATH_OFF_SANITY
     // (so it is already quiet about 4 s before the interface is completely calm).
+    /** during the black screen the camera sounds die out after the echo (ticks into the black screen). */
+    private static final int DEATH_CUT_TICKS = 36;
     private static final int BREATH_SEEN_TICKS = 60;
     private static final float BREATH_RISE_SLOW = 1F / 100F, BREATH_RISE_FAST = 1F / 70F, BREATH_FALL = 1F / 100F;
     private static final float BREATH_OFF_SANITY = 0.60F;
@@ -228,9 +230,12 @@ public class CameraEffects {
     /** breathing envelope 0..1 (linear, 2 s up / 2 s down). */
     private static float breathEnv, prevSanity, midShare;
     private static boolean breathLatch;
+    /** death scene of the Slenderman mod (read by reflection): 0 none, 1 the view turns to his face, 2 black screen. */
+    private static int deathPhase, deathBlackTicks;
+    /** loops that were started: used to notice a loop the sound engine dropped (e.g. after SoundManager.stop()). */
+    private static final java.util.Map<SoundInstance, Long> STARTED = new java.util.IdentityHashMap<>();
     private static float noEntityRate;
     private static int breathSeenTicks;
-    private static int breathDeadTicks;
 
     private static final class TickSound {
         final SimpleSoundInstance inst;
@@ -378,6 +383,18 @@ public class CameraEffects {
             }
         }
 
+        // death scene of the Slenderman mod: while the view turns to his face (3 s) every sound has to reach its
+        // maximum quickly; during the black screen the camera sounds die out together with the echo
+        int dp = 0;
+        if (sl != null) {
+            Number dn = callNumber(sl, "getDeathPhase");
+            if (dn != null) dp = dn.intValue();
+        }
+        deathPhase = dp;
+        deathBlackTicks = dp == 2 ? deathBlackTicks + 1 : 0;
+        boolean turn = dp == 1 && cam;
+        if (dp == 2 && deathBlackTicks >= DEATH_CUT_TICKS) cam = false;
+
         double dist = 0;
         slenderDist = 1.0E9D;
         boolean seen = false;
@@ -414,14 +431,14 @@ public class CameraEffects {
         // static_mid: comes in at ~12..40% sanity and gives way to the heavy static at ~62..85%
         float midGoal = smooth(MEDIUM_START, MEDIUM_FULL, sanity);   // goes on while the loss is high; only static_light lasts to the very end
         midShare = smooth(MEDIUM_CONT_FROM, MEDIUM_CONT_TO, sanity);
-        MID.update(midGoal, 0.08F, 1F, MID_FADE_TICKS);
+        MID.update(midGoal, turn ? 0.25F : 0.08F, 1F, MID_FADE_TICKS);
 
         float proxGoal = cam && sl != null ? 1F - (float) Mth.clamp((dist - 2.5) / 60.0, 0.0, 1.0) : 0F;
         PROX.update(proxGoal, 0.10F, 1F, HUD_FADE_TICKS + FOV_LAG_TICKS);
 
         // static_heavy: grows with the sanity loss, and earlier when he is close
         float heavyGoal = smooth(HEAVY_START_SANITY, HEAVY_FULL_SANITY, sanity);
-        HEAVY.update(heavyGoal, 0.35F, 1F / HEAVY_RISE_TICKS, SOUND_FADE_TICKS);
+        HEAVY.update(heavyGoal, 0.35F, turn ? 1F / 30F : 1F / HEAVY_RISE_TICKS, SOUND_FADE_TICKS);   // during the 3 s turn: full in ~1.5 s
 
         // shake of the picture / bending of the frame: as strong as the sanity loss (a tiny bit when just seen)
         float shakeTarget = 0F;
@@ -462,7 +479,8 @@ public class CameraEffects {
         }
         float rising = Mth.clamp((sanity - prevSanity) / 0.0125F, 0F, 1F);
         prevSanity = sanity;
-        float breathRate = breathLatch ? Mth.lerp(rising, BREATH_RISE_SLOW, BREATH_RISE_FAST) : BREATH_FALL;
+        if (turn) breathLatch = true;                       // the turn to his face: breathing comes in at once
+        float breathRate = breathLatch ? (turn ? 1F / 50F : Mth.lerp(rising, BREATH_RISE_SLOW, BREATH_RISE_FAST)) : BREATH_FALL;
         breathEnv = Mth.clamp(breathEnv + (breathLatch ? breathRate : -breathRate), 0F, 1F);
 
         manageSounds(mc);
@@ -767,28 +785,42 @@ public class CameraEffects {
         mediumNextMs = now + PIECE_MS + PIECE_PAUSE_MIN + HUD_RNG.nextInt(PIECE_PAUSE_RANDOM);
     }
 
+    /**
+     * True when a loop has to be (re)started: it was never started, it stopped itself, or the sound engine dropped it
+     * (SoundManager.stop() - for example in a death scene - kills every sound but does NOT mark the instances as
+     * stopped, so "isStopped()" alone would never notice and the loop would stay silent for the rest of the game).
+     */
+    private static boolean needsStart(SoundManager sm, SoundInstance inst) {
+        if (inst == null) return true;
+        if (inst instanceof AbstractTickableSoundInstance t && t.isStopped()) return true;
+        Long started = STARTED.get(inst);
+        if (started == null) return false;
+        if (System.currentTimeMillis() - started < 600L) return false;   // it has just been started: give the engine time
+        if (sm.isActive(inst)) return false;
+        sm.stop(inst);
+        return true;
+    }
+
+    private static void startLoop(SoundManager sm, SoundInstance inst) {
+        if (STARTED.size() > 64) STARTED.clear();
+        STARTED.put(inst, System.currentTimeMillis());
+        sm.play(inst);
+    }
+
     private static void manageSounds(Minecraft mc) {
         SoundManager sm = mc.getSoundManager();
-        if (MID.v * midShare > 0.01F && (mid == null || mid.isStopped())) {
+        if (MID.v * midShare > 0.01F && needsStart(sm, mid)) {
             mid = new MidLoop(SlenderCamMod.STATIC_MEDIUM.get());
-            sm.play(mid);
+            startLoop(sm, mid);
         }
-        // breathing must never be missing while the distortions last: if the loop is gone (or the engine dropped it
-        // for about a second) it is started again
-        if (breathEnv > 0.001F) {
-            boolean alive = breathingLoop != null && !breathingLoop.isStopped() && sm.isActive(breathingLoop);
-            breathDeadTicks = alive ? 0 : breathDeadTicks + 1;
-            if (breathingLoop == null || breathingLoop.isStopped() || breathDeadTicks > 20) {
-                breathDeadTicks = 0;
-                breathingLoop = new BreathingLoop(SlenderCamMod.BREATHING.get());
-                sm.play(breathingLoop);
-            }
-        } else {
-            breathDeadTicks = 0;
+        // breathing must never be missing while the distortions last
+        if (breathEnv > 0.001F && needsStart(sm, breathingLoop)) {
+            breathingLoop = new BreathingLoop(SlenderCamMod.BREATHING.get());
+            startLoop(sm, breathingLoop);
         }
-        if (heavyVol > 0.01F && (heavyLoop == null || heavyLoop.isStopped())) {
+        if (heavyVol > 0.01F && needsStart(sm, heavyLoop)) {
             heavyLoop = new HeavyLoop(SlenderCamMod.STATIC_HEAVY.get());
-            sm.play(heavyLoop);
+            startLoop(sm, heavyLoop);
         }
     }
 
@@ -895,9 +927,9 @@ public class CameraEffects {
             }
             GLITCH_GAIN[i] = g;
 
-            if (g > 0.01F && (GLITCH[i] == null || GLITCH[i].isStopped())) {
+            if (g > 0.01F && needsStart(sm, GLITCH[i])) {
                 GLITCH[i] = new GlitchLoop(glitchEvent(i), i);
-                sm.play(GLITCH[i]);
+                startLoop(sm, GLITCH[i]);
             }
         }
     }
