@@ -1,6 +1,9 @@
 package com.example.slendercam.client;
 
 import com.example.slendercam.SlenderCamMod;
+import com.mojang.blaze3d.pipeline.RenderTarget;
+import com.mojang.blaze3d.pipeline.TextureTarget;
+import com.mojang.blaze3d.platform.GlStateManager;
 import com.mojang.blaze3d.platform.NativeImage;
 import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.vertex.BufferBuilder;
@@ -24,6 +27,9 @@ import net.minecraftforge.client.gui.overlay.VanillaGuiOverlay;
 import net.minecraftforge.event.TickEvent;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.fml.common.Mod;
+
+import org.lwjgl.opengl.GL11;
+import org.lwjgl.opengl.GL30;
 
 import java.util.Random;
 
@@ -120,18 +126,24 @@ public class CameraHud {
         float tg = CameraEffects.teleportGlitch();
         float zoom = CameraEffects.zoom(partialTick);
 
-        drawGrain(ps, w, h, gi, tg);
-        drawVignette(ps, w, h);
-
         float s = h / (float) REF_H;
         int refW = Math.round(w / s);
         float dpr = s * (float) mc.getWindow().getGuiScale();   // device pixels per reference pixel
         boolean blinkOn = (System.currentTimeMillis() / BLINK_MS) % 2 == 0;
 
+        // the picture of the game is bent together with the frame (first, so the grain, the vignette and the
+        // interface are drawn on top of the bent picture)
         ps.pushPose();
         ps.scale(s, s, 1F);
-
         computeFrame(refW, tg);
+        drawBentScene(ps, refW);
+        ps.popPose();
+
+        drawGrain(ps, w, h, gi, tg);
+        drawVignette(ps, w, h);
+
+        ps.pushPose();
+        ps.scale(s, s, 1F);
 
         // Everything (frame, battery, zoom bar, REC, timer, cross) is made of small squares / lines,
         // so it all goes into one batch and every square follows the bending of the frame.
@@ -145,6 +157,80 @@ public class CameraHud {
         endQuads();
 
         ps.popPose();
+    }
+
+    // ------------------------------------------------------------------------------------------
+    //  The picture of the game bends together with the frame
+    // ------------------------------------------------------------------------------------------
+
+    /** how much of the displacement of the frame the picture follows (1 = exactly as much as the frame). */
+    private static final float SCENE_BEND = 0.75F;
+    private static final int SCENE_COLS = 40, SCENE_ROWS = 24;
+    private static RenderTarget sceneCopy;
+
+    /**
+     * Copies the finished picture of the game into a second buffer and draws it back as a net of small quads: every
+     * corner of the net is moved by the same warp() that bends the frame, so the picture follows the frame.
+     * Nothing is done while the frame is straight.
+     */
+    private static void drawBentScene(PoseStack ps, int refW) {
+        float moved = Math.abs(defL - restL) + Math.abs(defR - restR) + Math.abs(defT - restT) + Math.abs(defB - restB)
+                + Math.abs(vBend) + Math.abs(hBend);
+        if (moved < 0.5F) return;
+        try {
+            Minecraft mc = Minecraft.getInstance();
+            RenderTarget main = mc.getMainRenderTarget();
+            int tw = main.width, th = main.height;
+            if (sceneCopy == null) {
+                sceneCopy = new TextureTarget(tw, th, false, Minecraft.ON_OSX);
+                sceneCopy.setFilterMode(GL11.GL_LINEAR);
+            } else if (sceneCopy.width != tw || sceneCopy.height != th) {
+                sceneCopy.resize(tw, th, Minecraft.ON_OSX);
+            }
+            // copy of the picture
+            GlStateManager._glBindFramebuffer(GL30.GL_READ_FRAMEBUFFER, main.frameBufferId);
+            GlStateManager._glBindFramebuffer(GL30.GL_DRAW_FRAMEBUFFER, sceneCopy.frameBufferId);
+            GL30.glBlitFramebuffer(0, 0, tw, th, 0, 0, tw, th, GL11.GL_COLOR_BUFFER_BIT, GL11.GL_NEAREST);
+            main.bindWrite(false);
+
+            // the net: it reaches a bit beyond the screen, the picture edge is stretched there (no gaps)
+            RenderSystem.disableBlend();
+            RenderSystem.disableCull();
+            RenderSystem.colorMask(true, true, true, false);
+            RenderSystem.setShader(GameRenderer::getPositionTexShader);
+            RenderSystem.setShaderColor(1F, 1F, 1F, 1F);
+            RenderSystem.setShaderTexture(0, sceneCopy.getColorTextureId());
+            BufferBuilder b = Tesselator.getInstance().getBuilder();
+            b.begin(VertexFormat.Mode.QUADS, DefaultVertexFormat.POSITION_TEX);
+            Matrix4f m = ps.last().pose();
+            float x0 = -50F, x1 = refW + 50F, y0 = -35F, y1 = REF_H + 35F;
+            for (int j = 0; j < SCENE_ROWS; j++) {
+                float ya = y0 + (y1 - y0) * j / SCENE_ROWS;
+                float yb = y0 + (y1 - y0) * (j + 1) / SCENE_ROWS;
+                for (int i = 0; i < SCENE_COLS; i++) {
+                    float xa = x0 + (x1 - x0) * i / SCENE_COLS;
+                    float xb = x0 + (x1 - x0) * (i + 1) / SCENE_COLS;
+                    sceneVertex(b, m, xa, ya, refW);
+                    sceneVertex(b, m, xa, yb, refW);
+                    sceneVertex(b, m, xb, yb, refW);
+                    sceneVertex(b, m, xb, ya, refW);
+                }
+            }
+            BufferUploader.drawWithShader(b.end());
+        } catch (Throwable ignored) {
+            // never break the game because of a graphics detail
+        } finally {
+            RenderSystem.colorMask(true, true, true, true);
+        }
+    }
+
+    private static void sceneVertex(BufferBuilder b, Matrix4f m, float rx, float ry, int refW) {
+        warp(rx, ry, TMP_C);
+        float px = rx + (TMP_C[0] - rx) * SCENE_BEND;
+        float py = ry + (TMP_C[1] - ry) * SCENE_BEND;
+        float u = Mth.clamp(rx / refW, 0F, 1F);
+        float v = 1F - Mth.clamp(ry / REF_H, 0F, 1F);     // frame buffer textures are upside down
+        b.vertex(m, px, py, 0F).uv(u, v).endVertex();
     }
 
     // ------------------------------------------------------------------------------------------
