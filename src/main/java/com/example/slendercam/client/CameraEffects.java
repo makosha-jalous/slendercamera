@@ -240,6 +240,9 @@ public class CameraEffects {
     private static final java.util.Map<SoundInstance, Long> STARTED = new java.util.IdentityHashMap<>();
     private static float noEntityRate;
     private static int breathSeenTicks;
+    /** the watcher vanished in front of the player: a very short static (about 60 ms). */
+    private static int lastBlip = -1;
+    private static long blipEndMs;
 
     private static final class TickSound {
         final SimpleSoundInstance inst;
@@ -398,7 +401,7 @@ public class CameraEffects {
         deathPhase = dp;
         deathBlackTicks = dp == 2 ? deathBlackTicks + 1 : 0;
         boolean turn = dp == 1 && cam;
-        if (dp == 2 && deathBlackTicks >= DEATH_CUT_TICKS) cam = false;
+        if (dp >= 2) cam = false;          // the black screen and everything after it: the Slenderman mod cuts the sounds, the camera is silent
 
         double dist = 0;
         slenderDist = 1.0E9D;
@@ -417,6 +420,25 @@ public class CameraEffects {
             rawSanity = Math.max(0F, rawSanity - noEntityRate);
         }
         seenNow = seen;
+
+        // watcher mode: when he vanishes because the player comes closer, a very short static (60 ms)
+        if (sl != null) {
+            Number bn = callNumber(sl, "getBlipCue");
+            if (bn != null) {
+                int b = bn.intValue();
+                if (lastBlip < 0) lastBlip = b;
+                else if (b != lastBlip) {
+                    lastBlip = b;
+                    if (cam && dist < 200.0D) {
+                        blipEndMs = System.currentTimeMillis() + 60L;
+                        playLightPiece(1.0F);
+                        newPose(1.0F);
+                    }
+                }
+            }
+        } else {
+            lastBlip = -1;
+        }
 
         // seen gate: rises quickly when we look at him, falls slowly when we turn away.
         float seenGoal = seen ? 1F : 0F;
@@ -601,6 +623,15 @@ public class CameraEffects {
     public static void frameUpdate() {
         long now = System.currentTimeMillis();
         long piece = updateStutter(now);
+
+        if (now < blipEndMs) {
+            // the short static: one strong bend of the frame for about 60 ms, whatever the sanity is
+            frameVertical = twV * 26F;
+            frameVerticalBend = twVB * 14F;
+            frameHorizontal = twH * 22F;
+            frameHorizontalBend = twHB * 12F;
+            return;
+        }
 
         if (tpActive()) {
             frameVertical = 34F * teleportSignX;
