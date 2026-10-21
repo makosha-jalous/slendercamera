@@ -99,9 +99,9 @@ public class CameraEffects {
     private static final float HEAVY_VOLUME = 1.0F;
 
     private static final int SOUND_FADE_TICKS = 130;
-    private static final int MID_FADE_TICKS = 80;
-    private static final int BREATH_FADE_TICKS = 150;
-    private static final int HUD_FADE_TICKS = 150;
+    private static final int MID_FADE_TICKS = 12;
+    private static final int BREATH_FADE_TICKS = 24;
+    private static final int HUD_FADE_TICKS = 12;
     private static final int FOV_LAG_TICKS = 50;
 
     private static final float GLITCH_SOUND_MAX = 0.65F;
@@ -117,12 +117,12 @@ public class CameraEffects {
     //        the sanity is back at zero.
     /** length of one piece of static_light (ms, the files are 120..150) and the pause after it (ms). */
     /** pieces follow each other WITHOUT pauses: one every 125..160 ms = 6-8 pieces per second. */
-    private static final int PIECE_INTERVAL_MIN = 125;
-    private static final int PIECE_INTERVAL_RANDOM = 36;
+    private static final int PIECE_INTERVAL_MIN = 68;
+    private static final int PIECE_INTERVAL_RANDOM = 16;
     /** below this sanity loss the frame bends in sync with the pieces of static_light; from it up the free bend (see BEND_*) runs. */
     private static final float SYNC_BEND_MAX_SANITY = 0.40F;
     /** a synchronised bend lasts this share of the piece interval, then the frame is straight until the next piece. */
-    private static final float SYNC_BEND_SHARE = 0.65F;
+    private static final float SYNC_BEND_SHARE = 0.70F;
     private static final float LIGHT_VOLUME = 1.0F;
     /** the stutter goes on while the sanity is not back at (almost) zero. */
     private static final float TWITCH_END_SANITY = 0.004F;
@@ -156,9 +156,9 @@ public class CameraEffects {
     // (so it is already quiet about 4 s before the interface is completely calm).
     /** during the black screen the camera sounds die out after the echo (ticks into the black screen). */
     private static final int DEATH_CUT_TICKS = 36;
-    private static final int BREATH_SEEN_TICKS = 60;
-    private static final float BREATH_RISE_SLOW = 1F / 100F, BREATH_RISE_FAST = 1F / 70F, BREATH_FALL = 1F / 100F;
-    private static final float BREATH_OFF_SANITY = 0.60F;
+    private static final int BREATH_SEEN_TICKS = 1;
+    private static final float BREATH_RISE_SLOW = 1F / 60F, BREATH_RISE_FAST = 1F / 60F, BREATH_FALL = 1F / 50F;
+    private static final float BREATH_OFF_SANITY = 0.01F;
 
     private static final int TELEPORT_GLITCH_MS = 220;
     /** Jumpscare sound on teleport when he is out of view: only 10% of the time. */
@@ -420,7 +420,7 @@ public class CameraEffects {
 
         // seen gate: rises quickly when we look at him, falls slowly when we turn away.
         float seenGoal = seen ? 1F : 0F;
-        seenGate += (seenGoal - seenGate) * (seen ? 0.45F : 0.06F);
+        seenGate += (seenGoal - seenGate) * (seen ? 0.45F : 0.30F);
         if (seenGate < 0.001F) seenGate = 0F;
 
         // sanity 0..1 follows the value of the Slenderman mod (it already depends on distance and stare time)
@@ -434,9 +434,10 @@ public class CameraEffects {
         INTENSITY.update(sanity, RISE, 1F, BREATH_FADE_TICKS);
 
         // static_mid: comes in at ~12..40% sanity and gives way to the heavy static at ~62..85%
-        float midGoal = smooth(MEDIUM_START, MEDIUM_FULL, sanity);   // goes on while the loss is high; only static_light lasts to the very end
+        // static medium: on from a sanity loss of 25% to 100%, off below 25% (also on the way down); audible at once
+        float midGoal = sanity >= MEDIUM_START ? 0.55F + 0.45F * smooth(MEDIUM_START, 0.60F, sanity) : 0F;
         midShare = smooth(MEDIUM_CONT_FROM, MEDIUM_CONT_TO, sanity);
-        MID.update(midGoal, turn ? 0.25F : 0.08F, 1F, MID_FADE_TICKS);
+        MID.update(midGoal, turn ? 0.5F : 0.35F, 1F, MID_FADE_TICKS);
 
         float proxGoal = cam && sl != null ? 1F - (float) Mth.clamp((dist - 2.5) / 60.0, 0.0, 1.0) : 0F;
         PROX.update(proxGoal, 0.10F, 1F, HUD_FADE_TICKS + FOV_LAG_TICKS);
@@ -448,16 +449,14 @@ public class CameraEffects {
         // shake of the picture / bending of the frame: as strong as the sanity loss (a tiny bit when just seen)
         float shakeTarget = 0F;
         if (cam) {
-            boolean frenzy = near && sanity > FRENZY_SANITY;     // very close and high loss: strong shake at once
-            shakeTarget = frenzy ? Math.max(sanity, FRENZY_SHAKE) : sanity;
-            if (seen) shakeTarget = Math.max(shakeTarget, SEEN_SHAKE);
+            shakeTarget = sanity;                                // the distortions depend ONLY on the sanity loss
         }
         HUD.update(shakeTarget, 0.22F, 1F, HUD_FADE_TICKS);
 
         float delayed = SHAKE_DELAY[shakeDelayIdx];
         SHAKE_DELAY[shakeDelayIdx] = shakeTarget;
         shakeDelayIdx = (shakeDelayIdx + 1) % SHAKE_DELAY.length;
-        FOV.update(Math.max(shakeTarget, delayed), 0.22F, 1F, HUD_FADE_TICKS);
+        FOV.update(shakeTarget, 0.22F, 1F, HUD_FADE_TICKS);
 
         if (!cam) {
             INTENSITY.kill(0.8F);
@@ -791,7 +790,7 @@ public class CameraEffects {
             float e = breathEnv;
             float ramp = e * e * (3F - 2F * e);
             float level = Math.max(sanity, heavyVol);
-            this.volume = Math.max(0.0001F, ramp * (0.55F + 0.45F * level) * MASTER_VOLUME);
+            this.volume = Math.max(0.0001F, ramp * (0.30F + 0.70F * level) * MASTER_VOLUME);
             if (e <= 0F) this.stop();
         }
     }
@@ -799,7 +798,7 @@ public class CameraEffects {
     /** below ~50% sanity loss the medium static stutters: piece after piece (120..150 ms each, no pauses). */
     private static void manageMediumPieces() {
         float vol = MID.v * (1F - midShare);
-        if (vol < 0.02F) {
+        if (vol < 0.01F) {
             mediumNextMs = 0L;
             return;
         }
@@ -898,8 +897,8 @@ public class CameraEffects {
         // the strongest pair: zone = high sanity loss, plus a 3-5 s tail after the big static
         // layers 3 and 4 start when the sanity loss reaches 45..50% (a new random threshold every time) and stay
         // until it falls below 40% (plus the tail)
-        if (!topWasOn && topThreshold <= 0F) topThreshold = 0.45F + 0.05F * HUD_RNG.nextFloat();
-        boolean zone = sanity >= (topWasOn ? 0.40F : topThreshold);
+        if (!topWasOn && topThreshold <= 0F) topThreshold = 0.55F + 0.05F * HUD_RNG.nextFloat();
+        boolean zone = sanity >= (topWasOn ? 0.50F : topThreshold);
         if (zone) {
             topTailTicks = 60 + HUD_RNG.nextInt(41);          // 3-5 s after the zone ends
         } else if (topTailTicks > 0 && h < 0.03F) {

@@ -57,7 +57,7 @@ public class CameraHud {
 
     private static final int GRAY_EDGE = 0xA0FFFFFF;   // outlines of battery and zoom bar
     private static final int GRAY_LIT = 0xB4FFFFFF;    // lit pixels, timer digits
-    private static final int FRAME = 0x70FFFFFF;
+    private static final int FRAME = 0x5AFFFFFF;
     private static final int FRAME_CLEAR = 0x00FFFFFF;
     private static final int RED = 0xFFB00000;         // dark red like in the game
 
@@ -390,8 +390,8 @@ public class CameraHud {
             OY[i] = my * miter;
         }
 
-        float hw = Math.max(0.5F, 0.75F / dpr);     // half thickness of the solid core
-        float feather = Math.max(0.35F, 0.9F / dpr); // soft edge, about one screen pixel
+        float hw = Math.max(0.3F, 0.42F / dpr);     // half thickness of the solid core
+        float feather = Math.max(0.25F, 0.6F / dpr); // soft edge, about one screen pixel
         float[] off = {-(hw + feather), -hw, hw, hw + feather};
         int[] col = {FRAME_CLEAR, FRAME, FRAME, FRAME_CLEAR};
 
