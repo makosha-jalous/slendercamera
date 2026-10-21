@@ -108,8 +108,8 @@ public class CameraEffects {
     private static final int GLITCH_PAUSE_MIN = 60;
     private static final int GLITCH_PAUSE_RANDOM = 41;
 
-    private static final float VIEW_SHAKE_DEG = 1.3F;
-    private static final float VIEW_FOV_WOBBLE = 1.95F;
+    private static final float VIEW_SHAKE_DEG = 1.9F;
+    private static final float VIEW_FOV_WOBBLE = 2.8F;
 
     // ---- stutter (static_light), bend of the interface, medium static, breathing ----
     // SOUND: staticlight.ogg is cut into pieces of 120..150 ms (staticlight01..59). A piece plays, then a pause of
@@ -416,7 +416,7 @@ public class CameraEffects {
         } else {
             lastId = null;
             // he is not on the client (parked far away): the sanity keeps coming back at the server speed
-            if (noEntityRate <= 0F) noEntityRate = rawSanity / ((10F + 5F * rawSanity) * 20F);   // same speed as on the server
+            if (noEntityRate <= 0F) noEntityRate = rawSanity / ((10F + 5F * rawSanity) * 20F / 1.4F);   // same speed as on the server
             rawSanity = Math.max(0F, rawSanity - noEntityRate);
         }
         seenNow = seen;
@@ -609,7 +609,7 @@ public class CameraEffects {
     }
 
     private static float randomStrength() {
-        return HUD_RNG.nextFloat() < 0.25F ? 0.35F + 0.30F * HUD_RNG.nextFloat() : 0.70F + 0.30F * HUD_RNG.nextFloat();
+        return HUD_RNG.nextFloat() < 0.15F ? 0.60F + 0.25F * HUD_RNG.nextFloat() : 0.85F + 0.15F * HUD_RNG.nextFloat();
     }
 
     /**
@@ -664,7 +664,7 @@ public class CameraEffects {
         } else if (now >= twitchEndMs && now >= bendNextMs) {
             long dur = Math.round(Mth.lerp(closeness, BEND_DUR_FAR, BEND_DUR_NEAR) * (0.75F + 0.5F * HUD_RNG.nextFloat()));
             twitchEndMs = now + dur;
-            newPose(HUD_RNG.nextFloat() < 0.33F ? 0.25F + 0.30F * HUD_RNG.nextFloat() : 0.65F + 0.35F * HUD_RNG.nextFloat());
+            newPose(HUD_RNG.nextFloat() < 0.20F ? 0.55F + 0.25F * HUD_RNG.nextFloat() : 0.85F + 0.15F * HUD_RNG.nextFloat());
             long gap = Math.round(Mth.lerp(closeness, BEND_GAP_FAR, BEND_GAP_NEAR) * (0.70F + 0.60F * HUD_RNG.nextFloat()));
             bendNextMs = twitchEndMs + gap;
             // too close: from time to time this pose freezes for about a second (then a pause before the next freeze)
@@ -686,8 +686,10 @@ public class CameraEffects {
         float fade = Mth.clamp(p / 0.12F, 0F, 1F);
         float depth = Mth.lerp(closeness, BEND_DEPTH_FAR, BEND_DEPTH_NEAR);
 
-        float spread = (7F + 16F * p + 14F * p * p) * fade * depth;
-        float bend = (4F + 9F * p + 9F * p * p) * fade * depth;
+        // deeper and sharper from the very start; the boost fades out, so the high stages stay exactly as strong as before
+        float lowBoost = 1F + 1.1F * (1F - p) * (1F - p);
+        float spread = (7F + 16F * p + 14F * p * p) * fade * depth * lowBoost;
+        float bend = (4F + 9F * p + 9F * p * p) * fade * depth * lowBoost;
 
         if (sanity > 0.80F) {
             float extra = (sanity - 0.80F) / 0.20F;
@@ -1019,12 +1021,25 @@ public class CameraEffects {
             amp = (0.12F + 0.78F * level) * Mth.clamp(level / 0.08F, 0F, 1F) * VIEW_SHAKE_DEG
                     * (0.50F + 0.85F * proxVol);
         }
+        // from 40% sanity loss the shaking grows strongly and calms down together with the sanity
+        float heavyShake = smooth(0.40F, 0.75F, sanity);
+        amp *= 1F + 1.0F * heavyShake;
         if (tpActive()) amp += 1.2F;
         amp += flash * 3F;
 
-        e.setRoll(e.getRoll() + bobX + amp * 0.8F * jitter(21));
-        e.setYaw(e.getYaw() + (bobX * 0.5F) + amp * jitter(22));
-        e.setPitch(e.getPitch() + bobY + amp * jitter(23));
+        // a wide, slow sway from side to side along an upper arc (the middle is the highest point, the sides drop)
+        float sway = 0F, swing = 0F;
+        if (level > 0F) {
+            float speed = 0.0020F + 0.0010F * level;                       // about 2.5-3 s per full swing
+            swing = (float) Math.sin(now * speed);
+            sway = (1.2F + 5.5F * level) * Mth.clamp(level / 0.08F, 0F, 1F) * (1F + 0.8F * heavyShake)
+                    * (0.55F + 0.45F * proxVol);
+        }
+        float arcDrop = sway * 0.45F * swing * swing;                       // sides lower than the middle
+
+        e.setRoll(e.getRoll() + bobX + amp * 0.8F * jitter(21) + sway * 0.5F * swing);
+        e.setYaw(e.getYaw() + (bobX * 0.5F) + amp * jitter(22) + sway * swing);
+        e.setPitch(e.getPitch() + bobY + amp * jitter(23) + arcDrop);
     }
 
     @SubscribeEvent
