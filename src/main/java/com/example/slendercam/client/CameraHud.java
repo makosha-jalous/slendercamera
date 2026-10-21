@@ -568,6 +568,8 @@ public class CameraHud {
      * Fine film grain: a 512x512 noise texture re-rolled several times a second (every frame in a flash).
      * Under the glitch it gets stronger, flickers and refreshes faster ("hisses").
      */
+    private static int clamp255(int v) { return v < 0 ? 0 : Math.min(v, 255); }
+
     private static void drawGrain(PoseStack ps, int w, int h, float gi, float fl) {
         Minecraft mc = Minecraft.getInstance();
         if (grain == null) {
@@ -580,12 +582,20 @@ public class CameraHud {
         if (now - lastNoise > interval) {
             lastNoise = now;
             NativeImage img = grain.getPixels();
+            int chroma = 18 + Math.round(42F * Mth.clamp(gi * 2F, 0F, 1F));    // the colour cast grows with the sanity loss
             if (img != null) {
                 for (int y = 0; y < TEX; y++) {
                     for (int x = 0; x < TEX; x++) {
+                        // grey grain with a soft colour cast: real signal noise, not just grey-white dots
                         int v = RND.nextInt(256);
                         int a = RND.nextInt(256);
-                        img.setPixelRGBA(x, y, (a << 24) | (v << 16) | (v << 8) | v);
+                        int r = v, g2 = v, b = v;
+                        if (RND.nextInt(100) < 60) {
+                            r = clamp255(v + RND.nextInt(2 * chroma + 1) - chroma);
+                            g2 = clamp255(v + RND.nextInt(2 * chroma + 1) - chroma);
+                            b = clamp255(v + RND.nextInt(2 * chroma + 1) - chroma);
+                        }
+                        img.setPixelRGBA(x, y, (a << 24) | (b << 16) | (g2 << 8) | r);
                     }
                 }
                 grain.upload();
@@ -594,7 +604,7 @@ public class CameraHud {
         // calm -> action: the base grain smoothly grows from CALM to MAX while the aggression rises
         float gt = Mth.clamp(gi / 0.4F, 0F, 1F);
         gt = gt * gt * (3F - 2F * gt);
-        float alpha = Mth.lerp(gt, GRAIN_ALPHA_CALM, GRAIN_ALPHA_MAX) + 0.30F * gi;
+        float alpha = (Mth.lerp(gt, GRAIN_ALPHA_CALM, GRAIN_ALPHA_MAX) + 0.30F * gi) * (1F - 0.20F * gt);   // 20% less bright while the sanity is lost
         if (fl > 0F) {
             // Teleport uses the same camera grain, simply pushed to an almost opaque burst.
             alpha = 0.90F + 0.07F * RND.nextFloat();

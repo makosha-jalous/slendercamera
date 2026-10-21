@@ -123,6 +123,8 @@ public class CameraEffects {
     private static final float SYNC_BEND_MAX_SANITY = 0.40F;
     /** a synchronised bend lasts this share of the piece interval, then the frame is straight until the next piece. */
     private static final float SYNC_BEND_SHARE = 0.70F;
+    /** bends in the low stages: one every 150-205 ms = 5-6 a second. */
+    private static final int SYNC_BEND_MIN_MS = 150, SYNC_BEND_RANDOM_MS = 56;
     private static final float LIGHT_VOLUME = 1.0F;
     /** the stutter goes on while the sanity is not back at (almost) zero. */
     private static final float TWITCH_END_SANITY = 0.004F;
@@ -230,7 +232,7 @@ public class CameraEffects {
     /** the frame is frozen in its pose until this time, and the next freeze is allowed after holdNextMs. */
     private static long holdEndMs, holdNextMs;
     /** stutter stream: when the next pulse is due and when the current 2 s cycle started. */
-    private static long pulseNextMs, mediumNextMs, bendNextMs;
+    private static long pulseNextMs, mediumNextMs, bendNextMs, syncNextMs;
     /** breathing envelope 0..1 (linear, 2 s up / 2 s down). */
     private static float breathEnv, prevSanity, midShare;
     private static boolean breathLatch;
@@ -641,7 +643,10 @@ public class CameraEffects {
             return;
         }
 
-        if (seenGate < 0.02F || hudPressure < 0.01F) {
+        // first contact: the frame bends at once when he comes into view (a small base pressure), then follows the sanity
+        float pEff = Math.max(hudPressure, 0.12F * seenGate);
+        if (seenGate < 0.02F || pEff < 0.01F) {
+            syncNextMs = 0L;
             holdEndMs = 0L;
             twitchEndMs = 0L;
             bendNextMs = 0L;
@@ -655,9 +660,12 @@ public class CameraEffects {
             // in sync with static_light: a new pose with every piece, straight again before the next piece
             holdEndMs = 0L;
             bendNextMs = 0L;
-            if (piece > 0L) {
+            // about 5-6 bends a second: the bend starts with a piece of static_light, but not with every piece (there are ~13 a second)
+            if (piece > 0L && now >= syncNextMs) {
+                long iv = SYNC_BEND_MIN_MS + HUD_RNG.nextInt(SYNC_BEND_RANDOM_MS);
                 newPose(randomStrength());
-                twitchEndMs = now + Math.round(piece * SYNC_BEND_SHARE);
+                twitchEndMs = now + Math.round(iv * SYNC_BEND_SHARE);
+                syncNextMs = now + iv;
             }
         } else if (now < holdEndMs) {
             twitchEndMs = holdEndMs;                // frozen in the same pose
@@ -682,14 +690,15 @@ public class CameraEffects {
             return;
         }
 
-        float p = Mth.clamp(hudPressure, 0F, 1F);
+        float p = Mth.clamp(pEff, 0F, 1F);
         float fade = Mth.clamp(p / 0.12F, 0F, 1F);
         float depth = Mth.lerp(closeness, BEND_DEPTH_FAR, BEND_DEPTH_NEAR);
 
         // deeper and sharper from the very start; the boost fades out, so the high stages stay exactly as strong as before
-        float lowBoost = 1F + 1.1F * (1F - p) * (1F - p);
-        float spread = (7F + 16F * p + 14F * p * p) * fade * depth * lowBoost;
-        float bend = (4F + 9F * p + 9F * p * p) * fade * depth * lowBoost;
+        // low stages: strong and fast, but clearly weaker than the last stages; it grows smoothly into the old formula
+        float w = smooth(0.15F, 0.85F, p);
+        float spread = Mth.lerp(w, 11F + 6F * p, 7F + 16F * p + 14F * p * p) * fade * depth;
+        float bend = Mth.lerp(w, 6F + 4F * p, 4F + 9F * p + 9F * p * p) * fade * depth;
 
         if (sanity > 0.80F) {
             float extra = (sanity - 0.80F) / 0.20F;
@@ -994,6 +1003,14 @@ public class CameraEffects {
         }
     }
 
+    /** smooth continuous noise -1..1 (three sines of different speeds): no jumps between frames. */
+    private static float smoothShake(int seed, double tSec, float speed) {
+        double f1 = 1.7 + (seed % 7) * 0.31, f2 = 3.1 + (seed % 5) * 0.47, f3 = 5.3 + (seed % 3) * 0.6;
+        double tt = tSec * speed * Math.PI * 2.0;
+        return (float) (0.55 * Math.sin(tt * f1 + seed * 1.3) + 0.32 * Math.sin(tt * f2 + seed * 2.9)
+                + 0.13 * Math.sin(tt * f3 + seed * 4.1));
+    }
+
     @SubscribeEvent
     public static void onCameraAngles(ViewportEvent.ComputeCameraAngles e) {
         if (!CameraHud.active()) return;
@@ -1037,9 +1054,12 @@ public class CameraEffects {
         }
         float arcDrop = sway * 0.45F * swing * swing;                       // sides lower than the middle
 
-        e.setRoll(e.getRoll() + bobX + amp * 0.8F * jitter(21) + sway * 0.5F * swing);
-        e.setYaw(e.getYaw() + (bobX * 0.5F) + amp * jitter(22) + sway * swing);
-        e.setPitch(e.getPitch() + bobY + amp * jitter(23) + arcDrop);
+        // smooth, continuous shaking in every direction (left-right, up-down, tilt), sampled every rendered frame
+        double t = now / 1000.0;
+        float speed = 0.85F + 0.65F * level;
+        e.setRoll(e.getRoll() + bobX + amp * 0.8F * smoothShake(21, t, speed) + sway * 0.5F * swing);
+        e.setYaw(e.getYaw() + (bobX * 0.5F) + amp * smoothShake(22, t, speed) + sway * swing);
+        e.setPitch(e.getPitch() + bobY + amp * 1.1F * smoothShake(23, t, speed) + arcDrop);
     }
 
     @SubscribeEvent
@@ -1052,7 +1072,7 @@ public class CameraEffects {
         }
         float level = fovPressure >= 0.01F ? fovPressure : 0F;
         if (level > 0F) {
-            fov += VIEW_FOV_WOBBLE * level * Mth.clamp(level / 0.08F, 0F, 1F) * jitter(24);
+            fov += VIEW_FOV_WOBBLE * level * Mth.clamp(level / 0.08F, 0F, 1F) * smoothShake(24, System.currentTimeMillis() / 1000.0, 1F);
         }
         e.setFOV(fov);
     }
