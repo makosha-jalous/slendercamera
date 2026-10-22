@@ -109,7 +109,7 @@ public class CameraEffects {
     private static final int GLITCH_PAUSE_RANDOM = 41;
 
     private static final float VIEW_SHAKE_DEG = 1.9F;
-    private static final float VIEW_FOV_WOBBLE = 2.8F;
+    private static final float VIEW_FOV_WOBBLE = 4.5F;
 
     // ---- stutter (static_light), bend of the interface, medium static, breathing ----
     // SOUND: staticlight.ogg is cut into pieces of 120..150 ms (staticlight01..59). A piece plays, then a pause of
@@ -139,13 +139,17 @@ public class CameraEffects {
     private static final float BEND_DEPTH_FAR = 0.90F, BEND_DEPTH_NEAR = 1.70F;
     /** the frame freezes in one pose for about 1 s: only when closer than this (blocks) and at this sanity loss at least ... */
     private static final double HOLD_DIST = 8.0D;
-    private static final float HOLD_MIN_SANITY = 0.40F;
+    private static final float HOLD_MIN_SANITY = 0.50F;
     /** ... with this chance per bend, lasts 0.9..1.2 s, and then rests 2.5..6 s before the next freeze. */
-    private static final float HOLD_CHANCE = 0.08F;
-    private static final int HOLD_MS_MIN = 900;
-    private static final int HOLD_MS_RANDOM = 301;
-    private static final int HOLD_PAUSE_MIN = 2500;
-    private static final int HOLD_PAUSE_RANDOM = 3500;
+    private static final float HOLD_CHANCE = 0.05F;
+    private static final int HOLD_MS_MIN = 2000;
+    private static final int HOLD_MS_RANDOM = 1001;      // freezes last 2-3 s
+    private static final int HOLD_PAUSE_MIN = 6000;
+    private static final int HOLD_PAUSE_RANDOM = 8000;
+    /** we turn away / run: with this chance the frame stays frozen in its last pose for 2-3 s (only while the loss is still this high). */
+    private static final float HOLD_AFTER_SANITY = 0.45F, HOLD_AFTER_CHANCE = 0.35F;
+    /** a bend starts with a short "punch" (stronger for ~45 ms) and flickers like sparks while it lasts. */
+    private static final float PUNCH = 0.40F, SPARK = 0.32F;
 
     // MEDIUM STATIC (staticmedium.ogg): starts quiet at about 40% sanity loss and grows, stuttering in pieces
     // (staticmedium_p01..63, 120..150 ms, no pauses); near 50% it turns into one continuous track.
@@ -227,6 +231,12 @@ public class CameraEffects {
     private static float frameHorizontalBend;
 
     private static float twV, twVB, twH, twHB;
+    private static long poseStartMs, holdAfterMs;
+    private static float lvV, lvVB, lvH, lvHB;
+    private static boolean hadBend;
+    /** per rendered frame smoothed values for the shaking of the view (the game tick is only 20 steps a second). */
+    private static float viewLevel, viewFov, viewProx;
+    private static long lastViewNs;
     /** When the current bend of the frame ends. */
     private static long twitchEndMs;
     /** the frame is frozen in its pose until this time, and the next freeze is allowed after holdNextMs. */
@@ -601,8 +611,31 @@ public class CameraEffects {
         return interval;
     }
 
+    /** the view shaking is driven by values that are smoothed every RENDERED frame (not only every game tick). */
+    private static void updateView() {
+        long ns = System.nanoTime();
+        float dt = lastViewNs == 0L ? 0.016F : Math.min(0.05F, (ns - lastViewNs) / 1e9F);
+        lastViewNs = ns;
+        float k = 1F - (float) Math.exp(-dt * 9F);
+        viewLevel += (hudPressure - viewLevel) * k;
+        viewFov += (fovPressure - viewFov) * k;
+        viewProx += (proxVol - viewProx) * k;
+        if (viewLevel < 0.0005F) viewLevel = 0F;
+        if (viewFov < 0.0005F) viewFov = 0F;
+    }
+
+    /** fast random flicker -1..1 that changes only when the bucket (26 ms) changes. */
+    private static float sparkNoise(int seed, long bucket) {
+        long h = bucket * 0x9E3779B97F4A7C15L + seed * 0xC2B2AE3D27D4EB4FL;
+        h ^= (h >>> 31);
+        h *= 0xD6E8FEB86659FD93L;
+        h ^= (h >>> 29);
+        return ((h & 0xFFFFL) / 32767.5F) - 1F;
+    }
+
     /** a new random bent pose of the frame (strength 0..1: not every twitch is strong). */
     private static void newPose(float strength) {
+        poseStartMs = System.currentTimeMillis();
         float j = jitter(24);
         twV = Math.signum(j == 0F ? 1F : j) * Mth.clamp(0.5F + Math.abs(j), 0.5F, 1F) * strength;
         twVB = HUD_RNG.nextFloat() < 0.85F ? signedKick(strength) : 0F;
@@ -624,6 +657,7 @@ public class CameraEffects {
      */
     public static void frameUpdate() {
         long now = System.currentTimeMillis();
+        updateView();
         long piece = updateStutter(now);
 
         if (now < blipEndMs) {
@@ -650,9 +684,27 @@ public class CameraEffects {
             holdEndMs = 0L;
             twitchEndMs = 0L;
             bendNextMs = 0L;
+            // we turned away / ran away: now and then the frame stays frozen in its last pose for 2-3 s
+            if (hadBend) {
+                hadBend = false;
+                if (holdAfterMs == 0L && sanity >= HOLD_AFTER_SANITY && now >= holdNextMs
+                        && HUD_RNG.nextFloat() < HOLD_AFTER_CHANCE) {
+                    holdAfterMs = now + HOLD_MS_MIN + HUD_RNG.nextInt(HOLD_MS_RANDOM);
+                    holdNextMs = holdAfterMs + HOLD_PAUSE_MIN;
+                }
+            }
+            if (holdAfterMs != 0L && now < holdAfterMs && sanity >= 0.12F) {
+                frameVertical = lvV;
+                frameVerticalBend = lvVB;
+                frameHorizontal = lvH;
+                frameHorizontalBend = lvHB;
+                return;
+            }
+            holdAfterMs = 0L;
             frameVertical = frameHorizontal = frameVerticalBend = frameHorizontalBend = 0F;
             return;
         }
+        holdAfterMs = 0L;
 
         float closeness = 1F - (float) Mth.clamp((slenderDist - CLOSE_NEAR) / (CLOSE_FAR - CLOSE_NEAR), 0.0, 1.0);
 
@@ -676,7 +728,7 @@ public class CameraEffects {
             long gap = Math.round(Mth.lerp(closeness, BEND_GAP_FAR, BEND_GAP_NEAR) * (0.70F + 0.60F * HUD_RNG.nextFloat()));
             bendNextMs = twitchEndMs + gap;
             // too close: from time to time this pose freezes for about a second (then a pause before the next freeze)
-            if (slenderDist < HOLD_DIST && sanity >= HOLD_MIN_SANITY && now >= holdNextMs
+            if (sanity >= HOLD_MIN_SANITY && now >= holdNextMs
                     && HUD_RNG.nextFloat() < HOLD_CHANCE) {
                 holdEndMs = now + HOLD_MS_MIN + HUD_RNG.nextInt(HOLD_MS_RANDOM);
                 twitchEndMs = holdEndMs;
@@ -700,6 +752,10 @@ public class CameraEffects {
         float spread = Mth.lerp(w, 11F + 6F * p, 7F + 16F * p + 14F * p * p) * fade * depth;
         float bend = Mth.lerp(w, 6F + 4F * p, 4F + 9F * p + 9F * p * p) * fade * depth;
 
+        // the high stages bend more strongly than before
+        float high = 1F + 0.35F * smooth(0.60F, 1.0F, p);
+        spread *= high;
+        bend *= high;
         if (sanity > 0.80F) {
             float extra = (sanity - 0.80F) / 0.20F;
             spread *= 1F + 0.60F * extra;
@@ -708,10 +764,22 @@ public class CameraEffects {
 
         float g = Mth.clamp(seenGate, 0F, 1F);
 
-        frameVertical = twV * spread * g;
-        frameVerticalBend = twVB * bend * g;
-        frameHorizontal = twH * spread * 0.82F * g;
-        frameHorizontalBend = twHB * bend * 0.90F * g;
+        // sharper jumps: a punch at the start of every bend and fast spark-like flicker while it lasts
+        float punch = 1F + PUNCH * Mth.clamp(1F - (now - poseStartMs) / 45F, 0F, 1F);
+        long bucket = now / 26L;
+        float kV = punch * (1F + SPARK * sparkNoise(31, bucket));
+        float kVB = punch * (1F + SPARK * sparkNoise(32, bucket));
+        float kH = punch * (1F + SPARK * sparkNoise(33, bucket));
+        float kHB = punch * (1F + SPARK * sparkNoise(34, bucket));
+
+        frameVertical = twV * spread * g * kV;
+        frameVerticalBend = twVB * bend * g * kVB;
+        frameHorizontal = twH * spread * 0.82F * g * kH;
+        frameHorizontalBend = twHB * bend * 0.90F * g * kHB;
+        if (frameVertical != 0F || frameHorizontal != 0F || frameVerticalBend != 0F || frameHorizontalBend != 0F) {
+            lvV = frameVertical; lvVB = frameVerticalBend; lvH = frameHorizontal; lvHB = frameHorizontalBend;
+            hadBend = true;
+        }
     }
 
     /** One piece of static_light (the sound event picks one of the 59 files at random). */
@@ -1032,11 +1100,11 @@ public class CameraEffects {
             bobY = (float) Math.cos(now * 0.0015) * 0.15F;
         }
 
-        float level = hudPressure >= 0.01F ? hudPressure : 0F;
+        float level = viewLevel >= 0.01F ? viewLevel : 0F;
         float amp = 0F;
         if (level > 0F) {
             amp = (0.12F + 0.78F * level) * Mth.clamp(level / 0.08F, 0F, 1F) * VIEW_SHAKE_DEG
-                    * (0.50F + 0.85F * proxVol);
+                    * (0.50F + 0.85F * viewProx);
         }
         // from 40% sanity loss the shaking grows strongly and calms down together with the sanity
         float heavyShake = smooth(0.40F, 0.75F, sanity);
@@ -1050,7 +1118,7 @@ public class CameraEffects {
             float speed = 0.0020F + 0.0010F * level;                       // about 2.5-3 s per full swing
             swing = (float) Math.sin(now * speed);
             sway = (1.2F + 5.5F * level) * Mth.clamp(level / 0.08F, 0F, 1F) * (1F + 0.8F * heavyShake)
-                    * (0.55F + 0.45F * proxVol);
+                    * (0.55F + 0.45F * viewProx);
         }
         float arcDrop = sway * 0.45F * swing * swing;                       // sides lower than the middle
 
@@ -1070,9 +1138,12 @@ public class CameraEffects {
         if (z > 0.001F) {
             fov = fov / (1.0 + (ZOOM_MAX - 1.0) * z);
         }
-        float level = fovPressure >= 0.01F ? fovPressure : 0F;
+        float level = viewFov >= 0.01F ? viewFov : 0F;
         if (level > 0F) {
-            fov += VIEW_FOV_WOBBLE * level * Mth.clamp(level / 0.08F, 0F, 1F) * smoothShake(24, System.currentTimeMillis() / 1000.0, 1F);
+            // the FOV pulses smoothly (two slow-to-medium waves, every rendered frame), strong at high stages
+            double ft = System.currentTimeMillis() / 1000.0;
+            float wave = 0.65F * smoothShake(24, ft, 0.9F + 0.5F * level) + 0.45F * smoothShake(25, ft, 1.2F + 0.6F * level);
+            fov += VIEW_FOV_WOBBLE * (1F + 0.8F * smooth(0.40F, 0.75F, sanity)) * level * Mth.clamp(level / 0.08F, 0F, 1F) * wave;
         }
         e.setFOV(fov);
     }
