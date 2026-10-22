@@ -1127,7 +1127,9 @@ public class CameraEffects {
         float speed = 0.85F + 0.65F * level;
         e.setRoll(e.getRoll() + bobX + amp * 0.8F * smoothShake(21, t, speed) + sway * 0.5F * swing);
         e.setYaw(e.getYaw() + (bobX * 0.5F) + amp * smoothShake(22, t, speed) + sway * swing);
-        e.setPitch(e.getPitch() + bobY + amp * 1.1F * smoothShake(23, t, speed) + arcDrop);
+        // up and down: its own slow wave (so the view really moves in all four directions) plus the smooth shaking
+        float vert = sway * 0.60F * (float) Math.sin(now * speed * 0.0031F + 1.1F);
+        e.setPitch(e.getPitch() + bobY + amp * 1.7F * smoothShake(23, t, speed) + vert + arcDrop);
     }
 
     @SubscribeEvent
