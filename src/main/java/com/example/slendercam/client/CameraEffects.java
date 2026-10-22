@@ -1079,6 +1079,39 @@ public class CameraEffects {
                 + 0.13 * Math.sin(tt * f3 + seed * 4.1));
     }
 
+    private static float ownPhase, ownMove, ownRun;
+    private static long ownNs;
+    private static java.lang.reflect.Method gaitM;
+    private static boolean gaitTried;
+
+    /** {phase, move 0..1, run 0..1}: from the flashlight mod when it is live (so the hand and the view are in sync), else our own. */
+    private static float[] gaitState(Minecraft mc) {
+        try {
+            if (!gaitTried) {
+                gaitTried = true;
+                try {
+                    gaitM = Class.forName("com.example.slenderflashlight.client.FlashlightClient").getMethod("gaitState");
+                } catch (Throwable ignored) { gaitM = null; }
+            }
+            if (gaitM != null) {
+                float[] r = (float[]) gaitM.invoke(null);
+                if (r != null && r.length >= 4 && r[3] > 0.5F) return r;
+            }
+        } catch (Throwable ignored) { }
+        long ns = System.nanoTime();
+        float dt = ownNs == 0 ? 0.016F : Math.min(0.05F, (ns - ownNs) / 1e9F);
+        ownNs = ns;
+        double sp = mc.player.getDeltaMovement().horizontalDistance();
+        boolean moving = mc.player.isOnGround() && sp > 0.04;
+        boolean running = moving && mc.player.isSprinting();
+        float k = Math.min(1F, dt * 8F);
+        ownMove += ((moving ? 1F : 0F) - ownMove) * k;
+        ownRun += ((running ? 1F : 0F) - ownRun) * k;
+        if (moving) ownPhase += dt * 1.4F * (float) sp * 20F;
+        if (ownPhase > 6.2831853F) ownPhase -= 6.2831853F;
+        return new float[]{ownPhase, ownMove, ownRun, 1F};
+    }
+
     @SubscribeEvent
     public static void onCameraAngles(ViewportEvent.ComputeCameraAngles e) {
         if (!CameraHud.active()) return;
@@ -1086,19 +1119,25 @@ public class CameraEffects {
         if (mc.player == null) return;
 
         long now = System.currentTimeMillis();
-        float bobX;
-        float bobY;
+        float bobX;   // yaw (left-right)
+        float bobY;   // pitch (up-down)
+        float bobR;   // roll
 
-        if (mc.player.isSprinting()) {
-            bobX = (float) Math.sin(now * 0.008) * 1.8F;
-            bobY = (float) Math.abs(Math.cos(now * 0.008)) * 0.9F;
-        } else if (mc.player.getDeltaMovement().horizontalDistanceSqr() > 0.001) {
-            bobX = (float) Math.sin(now * 0.005) * 0.8F;
-            bobY = (float) Math.abs(Math.cos(now * 0.005)) * 0.4F;
-        } else {
-            bobX = (float) Math.sin(now * 0.002) * 0.25F;
-            bobY = (float) Math.cos(now * 0.0015) * 0.15F;
-        }
+        // Step-driven view: the centre of the screen moves along the same arc as the hand, but in the opposite direction
+        // (the hand goes right - the view goes left). The pace follows the real speed (Slowness 1 / 2 slows it down).
+        float[] g = gaitState(mc);
+        float gp = g[0], gMove = g[1], gRun = g[2];
+        float idleX = (float) Math.sin(now * 0.002) * 0.25F;
+        float idleY = (float) Math.cos(now * 0.0015) * 0.15F;
+        float idleK = 1F - gMove;
+        // walking: a wave (side to side + a small snake-like up-down wave); running: a wide swing along an upper arc
+        float walkX = -(float) Math.sin(gp) * 0.9F;
+        float walkY = (float) Math.sin(3 * gp) * 0.35F;
+        float runX = -(float) Math.sin(gp) * 2.6F;
+        float runY = (float) Math.sin(gp) * (float) Math.sin(gp) * 1.5F - 0.5F;   // the sides are lower than the middle
+        bobX = Mth.lerp(gRun, walkX, runX) * gMove + idleX * idleK;
+        bobY = Mth.lerp(gRun, walkY, runY) * gMove + idleY * idleK;
+        bobR = -(float) Math.sin(gp) * Mth.lerp(gRun, 0.9F, 2.2F) * gMove + idleX * idleK;
 
         float level = viewLevel >= 0.01F ? viewLevel : 0F;
         float amp = 0F;
@@ -1125,8 +1164,8 @@ public class CameraEffects {
         // smooth, continuous shaking in every direction (left-right, up-down, tilt), sampled every rendered frame
         double t = now / 1000.0;
         float speed = 0.85F + 0.65F * level;
-        e.setRoll(e.getRoll() + bobX + amp * 0.8F * smoothShake(21, t, speed) + sway * 0.5F * swing);
-        e.setYaw(e.getYaw() + (bobX * 0.5F) + amp * smoothShake(22, t, speed) + sway * swing);
+        e.setRoll(e.getRoll() + bobR + amp * 0.8F * smoothShake(21, t, speed) + sway * 0.5F * swing);
+        e.setYaw(e.getYaw() + bobX + amp * smoothShake(22, t, speed) + sway * swing);
         // up and down: its own slow wave (so the view really moves in all four directions) plus the smooth shaking
         float vert = sway * 0.60F * (float) Math.sin(now * speed * 0.0031F + 1.1F);
         e.setPitch(e.getPitch() + bobY + amp * 1.7F * smoothShake(23, t, speed) + vert + arcDrop);
