@@ -1107,13 +1107,13 @@ public class CameraEffects {
         float k = Math.min(1F, dt * 8F);
         ownMove += ((moving ? 1F : 0F) - ownMove) * k;
         ownRun += ((running ? 1F : 0F) - ownRun) * k;
-        // fixed pace: one swing = one step: walking 1.5 s, running 0.5 s
-        if (moving) ownPhase += dt * Mth.lerp(ownRun, 6.2831853F / 1.5F, 6.2831853F / 0.5F);
+        // fixed pace: a step every 0.8 s walking, every 0.6 s running (a swing = two steps)
+        if (moving) ownPhase += dt * Mth.lerp(ownRun, 6.2831853F / 1.6F, 6.2831853F / 1.2F);
         if (ownPhase > 6.2831853F) ownPhase -= 6.2831853F;
         return new float[]{ownPhase, ownMove, ownRun, 1F};
     }
 
-    private static float lastStepPhase;
+    private static int lastStepK;
     private static boolean ownStep;
 
     /** Our own footsteps: one step per swing (walking 1.5 s, running 0.5 s); the vanilla steps near the player are muted. */
@@ -1123,8 +1123,9 @@ public class CameraEffects {
         Minecraft mc = Minecraft.getInstance();
         if (mc.player == null || mc.level == null || mc.isPaused() || !CameraHud.active()) return;
         float[] g = gaitState(mc);
-        boolean stepNow = g[0] < lastStepPhase - 3F;
-        lastStepPhase = g[0];
+        int k = (int) Math.floor((g[0] + 1.5707963F) / 3.1415927F);   // 0,1,2: the steps are at 90 and 270 degrees
+        boolean stepNow = k > lastStepK;
+        lastStepK = k;
         if (!stepNow || g[1] < 0.5F || !mc.player.isOnGround() || mc.player.isInWater()) return;
         net.minecraft.core.BlockPos pos = mc.player.getOnPos();
         net.minecraft.world.level.block.state.BlockState st = mc.level.getBlockState(pos);
@@ -1168,13 +1169,14 @@ public class CameraEffects {
         float idleY = (float) Math.cos(now * 0.0015) * 0.15F;
         float idleK = 1F - gMove;
         // walking: a wave (side to side + a small snake-like up-down wave); running: a wide swing along an upper arc
-        float walkX = -(float) Math.sin(gp) * 0.9F;
-        float walkY = (float) Math.sin(3 * gp) * 0.35F;
-        float runX = -(float) Math.sin(gp) * 2.6F;
+        // the view turns the same way as the hand moves (both left, both right); the tilt follows the shader pack
+        float walkX = (float) Math.sin(gp) * 0.9F;
+        float walkY = (float) Math.sin(gp) * (float) Math.sin(gp) * 0.8F - 0.3F;     // a smaller upper arc
+        float runX = (float) Math.sin(gp) * 2.6F;
         float runY = (float) Math.sin(gp) * (float) Math.sin(gp) * 1.5F - 0.5F;   // the sides are lower than the middle
         bobX = Mth.lerp(gRun, walkX, runX) * gMove + idleX * idleK;
         bobY = Mth.lerp(gRun, walkY, runY) * gMove + idleY * idleK;
-        bobR = -(float) Math.sin(gp) * Mth.lerp(gRun, 0.9F, 2.2F) * gMove + idleX * idleK;
+        bobR = (float) Math.sin(gp) * Mth.lerp(gRun, 0.9F, 2.2F) * gMove + idleX * idleK;
 
         // the vanilla view bob is removed (it would add its own tilt out of step with ours)
         if (mc.options.bobView().get() && mc.getCameraEntity() instanceof net.minecraft.world.entity.player.Player bp) {
@@ -1187,36 +1189,24 @@ public class CameraEffects {
             bobY -= Math.abs(Mth.cos(f1 * pi - 0.2F) * f2) * 5.0F;
         }
 
+        // ---- shaking of the view, made from scratch: it depends on the lost sanity.
+        // Light and simple at first, stronger and stronger when the sanity is critical. It is mostly a TILT around the
+        // middle of the screen (the centre hardly moves); smooth sines of the real time, so it is smooth at any FPS.
         float level = viewLevel >= 0.01F ? viewLevel : 0F;
+        float loss = Mth.clamp(sanity, 0F, 1F);
+        float sev = Mth.clamp(loss * 0.85F + level * 0.35F * (0.5F + 0.5F * viewProx), 0F, 1F);
         float amp = 0F;
-        if (level > 0F) {
-            amp = (0.12F + 0.78F * level) * Mth.clamp(level / 0.08F, 0F, 1F) * VIEW_SHAKE_DEG
-                    * (0.50F + 0.85F * viewProx);
+        if (sev > 0.01F) {
+            amp = (0.05F + 0.50F * sev * sev + 1.70F * sev * sev * sev * sev) * Mth.clamp(sev / 0.06F, 0F, 1F);
         }
-        // from 40% sanity loss the shaking grows strongly and calms down together with the sanity
-        float heavyShake = smooth(0.40F, 0.75F, sanity);
-        amp *= 1F + 1.0F * heavyShake;
-        if (tpActive()) amp += 1.2F;
-        amp += flash * 3F;
+        if (tpActive()) amp += 0.6F;
+        amp += flash * 1.5F;
 
-        // a wide, slow sway from side to side along an upper arc (the middle is the highest point, the sides drop)
-        float sway = 0F, swing = 0F;
-        if (level > 0F) {
-            float speed = 0.0020F + 0.0010F * level;                       // about 2.5-3 s per full swing
-            swing = (float) Math.sin(now * speed);
-            sway = (1.2F + 5.5F * level) * Mth.clamp(level / 0.08F, 0F, 1F) * (1F + 0.8F * heavyShake)
-                    * (0.55F + 0.45F * viewProx);
-        }
-        float arcDrop = sway * 0.45F * swing * swing;                       // sides lower than the middle
-
-        // smooth, continuous shaking in every direction (left-right, up-down, tilt), sampled every rendered frame
         double t = now / 1000.0;
-        float speed = 0.85F + 0.65F * level;
-        e.setRoll(e.getRoll() + bobR + amp * 0.8F * smoothShake(21, t, speed) + sway * 0.5F * swing);
-        e.setYaw(e.getYaw() + bobX + amp * smoothShake(22, t, speed) + sway * swing);
-        // up and down: its own slow wave (so the view really moves in all four directions) plus the smooth shaking
-        float vert = sway * 0.60F * (float) Math.sin(now * speed * 0.0031F + 1.1F);
-        e.setPitch(e.getPitch() + bobY + amp * 1.7F * smoothShake(23, t, speed) + vert + arcDrop);
+        float speed = 0.8F + 0.9F * sev;
+        e.setRoll(e.getRoll() + bobR + amp * smoothShake(21, t, speed));
+        e.setYaw(e.getYaw() + bobX + amp * 0.30F * smoothShake(22, t, speed));
+        e.setPitch(e.getPitch() + bobY + amp * 0.35F * smoothShake(23, t, speed));
     }
 
     @SubscribeEvent

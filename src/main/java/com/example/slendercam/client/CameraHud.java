@@ -55,9 +55,9 @@ public class CameraHud {
     private static final int BLINK_MS = 500;             // REC text blink interval
     private static final float CELL = 3F;                // bending mesh cell size in reference pixels
 
-    private static final int GRAY_EDGE = 0xA0FFFFFF;   // outlines of battery and zoom bar
-    private static final int GRAY_LIT = 0xB4FFFFFF;    // lit pixels, timer digits
-    private static final int FRAME = 0x5AFFFFFF;
+    private static final int GRAY_EDGE = 0xB8FFFFFF;   // outlines of battery and zoom bar
+    private static final int GRAY_LIT = 0xCCFFFFFF;    // lit pixels, timer digits
+    private static final int FRAME = 0x9AFFFFFF;
     private static final int FRAME_CLEAR = 0x00FFFFFF;
     private static final int RED = 0xFFB00000;         // dark red like in the game
 
@@ -92,7 +92,29 @@ public class CameraHud {
         return mc.player != null
                 && mc.options.getCameraType().isFirstPerson()
                 && (mc.player.getMainHandItem().is(SlenderCamMod.CAMERA.get())
-                || mc.player.getOffhandItem().is(SlenderCamMod.CAMERA.get()));
+                || mc.player.getOffhandItem().is(SlenderCamMod.CAMERA.get())
+                || focusHidesCamera(mc));
+    }
+
+    private static java.lang.reflect.Method savedOffM;
+    private static boolean savedOffTried;
+
+    /** While the long-range light of the flashlight is held, the flashlight mod parks a marker in the off hand; the camera is behind it. */
+    private static boolean focusHidesCamera(Minecraft mc) {
+        if (mc.player.getOffhandItem().isEmpty()) return false;
+        try {
+            if (!savedOffTried) {
+                savedOffTried = true;
+                try {
+                    savedOffM = Class.forName("com.example.slenderflashlight.client.FlashlightFocus").getMethod("savedOffhand");
+                } catch (Throwable ignored) { savedOffM = null; }
+            }
+            if (savedOffM == null) return false;
+            Object o = savedOffM.invoke(null);
+            return o instanceof net.minecraft.world.item.ItemStack st && st.is(SlenderCamMod.CAMERA.get());
+        } catch (Throwable t) {
+            return false;
+        }
     }
 
     @SubscribeEvent
@@ -165,6 +187,8 @@ public class CameraHud {
 
     /** how much of the displacement of the frame the picture follows (1 = exactly as much as the frame). */
     private static final float SCENE_BEND = 0.75F;
+    /** a light, constant fish-eye of the picture (the lens of the camera): 0 = none. */
+    private static final float FISHEYE = 0.040F;
     private static final int SCENE_COLS = 40, SCENE_ROWS = 24;
     private static RenderTarget sceneCopy;
 
@@ -176,7 +200,7 @@ public class CameraHud {
     private static void drawBentScene(PoseStack ps, int refW) {
         float moved = Math.abs(defL - restL) + Math.abs(defR - restR) + Math.abs(defT - restT) + Math.abs(defB - restB)
                 + Math.abs(vBend) + Math.abs(hBend);
-        if (moved < 0.5F) return;
+        if (moved < 0.5F && FISHEYE <= 0F) return;
         try {
             Minecraft mc = Minecraft.getInstance();
             RenderTarget main = mc.getMainRenderTarget();
@@ -228,6 +252,12 @@ public class CameraHud {
         warp(rx, ry, TMP_C);
         float px = rx + (TMP_C[0] - rx) * SCENE_BEND;
         float py = ry + (TMP_C[1] - ry) * SCENE_BEND;
+        // barrel distortion around the middle of the screen
+        float dxn = (px - refW * 0.5F) / (refW * 0.5F), dyn = (py - REF_H * 0.5F) / (REF_H * 0.5F);
+        // barrel (fish-eye): the middle is magnified, the sides are squeezed a little; stronger on the left / right sides
+        float fe = 1F - FISHEYE * (dxn * dxn + 0.35F * dyn * dyn);
+        px = refW * 0.5F + (px - refW * 0.5F) * fe;
+        py = REF_H * 0.5F + (py - REF_H * 0.5F) * fe;
         float u = Mth.clamp(rx / refW, 0F, 1F);
         float v = 1F - Mth.clamp(ry / REF_H, 0F, 1F);     // frame buffer textures are upside down
         b.vertex(m, px, py, 0F).uv(u, v).endVertex();
@@ -539,7 +569,7 @@ public class CameraHud {
 
     private static void drawCross(int refW) {
         int mx = refW / 2, my = REF_H / 2;
-        int c = 0x60FFFFFF;
+        int c = 0x78FFFFFF;
         wRect(mx - 15, my, mx + 16, my + 1, c);
         wRect(mx, my - 15, mx + 1, my + 16, c);
     }
