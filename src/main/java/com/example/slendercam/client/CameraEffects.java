@@ -124,7 +124,7 @@ public class CameraEffects {
     /** a synchronised bend lasts this share of the piece interval, then the frame is straight until the next piece. */
     private static final float SYNC_BEND_SHARE = 0.70F;
     /** bends in the low stages: one every 150-205 ms = 5-6 a second. */
-    private static final int SYNC_BEND_MIN_MS = 270, SYNC_BEND_RANDOM_MS = 110;
+    private static final int SYNC_BEND_MIN_MS = 150, SYNC_BEND_RANDOM_MS = 56;
     private static final float LIGHT_VOLUME = 1.0F;
     /** the stutter goes on while the sanity is not back at (almost) zero. */
     private static final float TWITCH_END_SANITY = 0.004F;
@@ -132,7 +132,7 @@ public class CameraEffects {
     // BEND: far away the frame twitches often and fast (about 200-270 ms of bend in every second) but weakly;
     //       the closer he is, the deeper the bend, but the twitches get slower (longer, with longer pauses).
     private static final float BEND_DUR_FAR = 55F, BEND_DUR_NEAR = 170F;     // ms
-    private static final float BEND_GAP_FAR = 330F, BEND_GAP_NEAR = 800F;    // ms between two bends
+    private static final float BEND_GAP_FAR = 160F, BEND_GAP_NEAR = 420F;    // ms between two bends
     /** closeness: 0 at CLOSE_FAR blocks (or more), 1 at CLOSE_NEAR blocks (or less). */
     private static final double CLOSE_FAR = 40.0D, CLOSE_NEAR = 3.0D;
     /** depth of the bend: x BEND_DEPTH_FAR when far, x BEND_DEPTH_NEAR when very close. */
@@ -149,7 +149,7 @@ public class CameraEffects {
     /** we turn away / run: with this chance the frame stays frozen in its last pose for 2-3 s (only while the loss is still this high). */
     private static final float HOLD_AFTER_SANITY = 0.45F, HOLD_AFTER_CHANCE = 0.35F;
     /** a bend starts with a short "punch" (stronger for ~45 ms) and flickers like sparks while it lasts. */
-    private static final float PUNCH = 0.40F, SPARK = 0.0F;     // no flicker steps inside a bend: one bend = one pose
+    private static final float PUNCH = 0.40F, SPARK = 0.32F;
 
     // MEDIUM STATIC (staticmedium.ogg): starts quiet at about 40% sanity loss and grows, stuttering in pieces
     // (staticmedium_p01..63, 120..150 ms, no pauses); near 50% it turns into one continuous track.
@@ -725,7 +725,9 @@ public class CameraEffects {
             long dur = Math.round(Mth.lerp(closeness, BEND_DUR_FAR, BEND_DUR_NEAR) * (0.75F + 0.5F * HUD_RNG.nextFloat()));
             twitchEndMs = now + dur;
             newPose(HUD_RNG.nextFloat() < 0.20F ? 0.55F + 0.25F * HUD_RNG.nextFloat() : 0.85F + 0.15F * HUD_RNG.nextFloat());
-            long gap = Math.round(Mth.lerp(closeness, BEND_GAP_FAR, BEND_GAP_NEAR) * (0.70F + 0.60F * HUD_RNG.nextFloat()));
+            // the higher the lost sanity, the rarer (but deeper) the bends: up to 2.6 times longer pauses
+            long gap = Math.round(Mth.lerp(closeness, BEND_GAP_FAR, BEND_GAP_NEAR) * (0.70F + 0.60F * HUD_RNG.nextFloat())
+                    * (1F + 1.6F * smooth(0.40F, 0.85F, sanity)));
             bendNextMs = twitchEndMs + gap;
             // too close: from time to time this pose freezes for about a second (then a pause before the next freeze)
             if (sanity >= HOLD_MIN_SANITY && now >= holdNextMs
@@ -1136,7 +1138,8 @@ public class CameraEffects {
         return (n & 0xFFFFFFL) / (float) 0x1000000;
     }
 
-    private static float circPhase;
+    private static float circPhase, circSample, tremX, tremY;
+    private static long circNextMs;
     private static long circNs;
     private static boolean ownStep;
 
@@ -1235,14 +1238,17 @@ public class CameraEffects {
         circPhase += cdt * 6.2831853F * (0.45F + 0.75F * sev);
         if (circPhase > 6.2831853F) circPhase -= 6.2831853F;
         float rad = amp * (0.80F + 0.20F * smoothShake(22, t, speed));
-        // two layers like in the original: a big slow wandering + a small fast tremor (both grow with the lost sanity)
-        float bigYaw = amp * 0.40F * smoothShake(41, t, 0.5F);
-        float bigPitch = amp * 0.40F * smoothShake(42, t, 0.5F);
-        float smallYaw = amp * 0.13F * smoothShake(43, t, 2.2F);
-        float smallPitch = amp * 0.13F * smoothShake(44, t, 2.2F);
-        e.setRoll(e.getRoll() + bobR + amp * 0.9F * (float) Math.sin(circPhase + 1.3F));
-        e.setYaw(e.getYaw() + bobX + rad * 0.30F * (float) Math.sin(circPhase) + bigYaw + smallYaw);
-        e.setPitch(e.getPitch() + bobY + rad * 0.30F * (float) Math.cos(circPhase) + bigPitch + smallPitch);
+        // the picture shakes in circles, jerky (a new position about every 40-55 ms), not too strong; the centre only
+        // trembles a little
+        if (now >= circNextMs) {
+            circNextMs = now + 40L + HUD_RNG.nextInt(16);
+            circSample = circPhase + (HUD_RNG.nextFloat() - 0.5F) * 0.7F;
+            tremX = (HUD_RNG.nextFloat() - 0.5F) * 2F;
+            tremY = (HUD_RNG.nextFloat() - 0.5F) * 2F;
+        }
+        e.setRoll(e.getRoll() + bobR + amp * 0.9F * (float) Math.sin(circSample + 1.3F));
+        e.setYaw(e.getYaw() + bobX + rad * 0.50F * (float) Math.sin(circSample) + amp * 0.06F * tremX);
+        e.setPitch(e.getPitch() + bobY + rad * 0.50F * (float) Math.cos(circSample) + amp * 0.06F * tremY);
     }
 
     @SubscribeEvent
@@ -1260,6 +1266,8 @@ public class CameraEffects {
             float wave = 0.90F * (float) Math.sin(circPhase + 2.2F) + 0.25F * smoothShake(25, ft, 0.9F + 0.5F * level);
             fov += VIEW_FOV_WOBBLE * (1F + 0.8F * smooth(0.40F, 0.75F, sanity)) * level * Mth.clamp(level / 0.08F, 0F, 1F) * wave;
         }
+        // a slight zoom in that grows with the lost sanity
+        fov -= 3.5F * smooth(0.15F, 1.0F, sanity) * (0.85F + 0.15F * Math.abs(tremX));
         e.setFOV(fov);
     }
 }

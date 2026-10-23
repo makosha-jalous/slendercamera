@@ -190,7 +190,7 @@ public class CameraHud {
     /** a light, constant fish-eye of the picture (the lens of the camera): 0 = none. */
     private static final float FISHEYE = 0F;        // the picture itself is not bent by a lens
     /** a very light fish-eye of the frame, the cross and the other white elements only (the sides bow outwards). */
-    private static final float LENS = 0.05F;
+    private static final float LENS = 0.03F;
     private static final int SCENE_COLS = 40, SCENE_ROWS = 24;
     private static RenderTarget sceneCopy;
     private static float caScale;
@@ -351,9 +351,8 @@ public class CameraHud {
             float cx = (restL + restR) * 0.5F, cy = (restT + restB) * 0.5F;
             float hx = Math.max(1F, (restR - restL) * 0.5F), hy = Math.max(1F, (restB - restT) * 0.5F);
             float dx = (x - cx) / hx, dy = (y - cy) / hy;
-            float fe = 1F + LENS * (1F - dx * dx - 0.35F * dy * dy);
-            x = cx + (x - cx) * fe;
-            y = cy + (y - cy) * fe;
+            // only the vertical sides bow (sideways); the horizontal sides stay straight
+            x = cx + (x - cx) * (1F + LENS * (1F - dy * dy));
         }
         qb.vertex(qm, x, y, 0F)
                 .color((argb >> 16) & 255, (argb >> 8) & 255, argb & 255, (argb >>> 24) & 255)
