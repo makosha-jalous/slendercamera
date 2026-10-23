@@ -124,7 +124,7 @@ public class CameraEffects {
     /** a synchronised bend lasts this share of the piece interval, then the frame is straight until the next piece. */
     private static final float SYNC_BEND_SHARE = 0.70F;
     /** bends in the low stages: one every 150-205 ms = 5-6 a second. */
-    private static final int SYNC_BEND_MIN_MS = 150, SYNC_BEND_RANDOM_MS = 56;
+    private static final int SYNC_BEND_MIN_MS = 270, SYNC_BEND_RANDOM_MS = 110;
     private static final float LIGHT_VOLUME = 1.0F;
     /** the stutter goes on while the sanity is not back at (almost) zero. */
     private static final float TWITCH_END_SANITY = 0.004F;
@@ -132,7 +132,7 @@ public class CameraEffects {
     // BEND: far away the frame twitches often and fast (about 200-270 ms of bend in every second) but weakly;
     //       the closer he is, the deeper the bend, but the twitches get slower (longer, with longer pauses).
     private static final float BEND_DUR_FAR = 55F, BEND_DUR_NEAR = 170F;     // ms
-    private static final float BEND_GAP_FAR = 160F, BEND_GAP_NEAR = 420F;    // ms between two bends
+    private static final float BEND_GAP_FAR = 330F, BEND_GAP_NEAR = 800F;    // ms between two bends
     /** closeness: 0 at CLOSE_FAR blocks (or more), 1 at CLOSE_NEAR blocks (or less). */
     private static final double CLOSE_FAR = 40.0D, CLOSE_NEAR = 3.0D;
     /** depth of the bend: x BEND_DEPTH_FAR when far, x BEND_DEPTH_NEAR when very close. */
@@ -149,7 +149,7 @@ public class CameraEffects {
     /** we turn away / run: with this chance the frame stays frozen in its last pose for 2-3 s (only while the loss is still this high). */
     private static final float HOLD_AFTER_SANITY = 0.45F, HOLD_AFTER_CHANCE = 0.35F;
     /** a bend starts with a short "punch" (stronger for ~45 ms) and flickers like sparks while it lasts. */
-    private static final float PUNCH = 0.40F, SPARK = 0.32F;
+    private static final float PUNCH = 0.40F, SPARK = 0.0F;     // no flicker steps inside a bend: one bend = one pose
 
     // MEDIUM STATIC (staticmedium.ogg): starts quiet at about 40% sanity loss and grows, stuttering in pieces
     // (staticmedium_p01..63, 120..150 ms, no pauses); near 50% it turns into one continuous track.
@@ -1114,6 +1114,8 @@ public class CameraEffects {
     }
 
     private static int lastStepK;
+    private static float circPhase;
+    private static long circNs;
     private static boolean ownStep;
 
     /** Our own footsteps: one step per swing (walking 1.5 s, running 0.5 s); the vanilla steps near the player are muted. */
@@ -1204,9 +1206,16 @@ public class CameraEffects {
 
         double t = now / 1000.0;
         float speed = 0.8F + 0.9F * sev;
-        e.setRoll(e.getRoll() + bobR + amp * smoothShake(21, t, speed));
-        e.setYaw(e.getYaw() + bobX + amp * 0.30F * smoothShake(22, t, speed));
-        e.setPitch(e.getPitch() + bobY + amp * 0.35F * smoothShake(23, t, speed));
+        // the shaking goes round in a small circle (the pace follows the lost sanity), its size breathes a little
+        long nowNs = System.nanoTime();
+        float cdt = circNs == 0 ? 0.016F : Math.min(0.05F, (nowNs - circNs) / 1e9F);
+        circNs = nowNs;
+        circPhase += cdt * 6.2831853F * (0.45F + 0.75F * sev);
+        if (circPhase > 6.2831853F) circPhase -= 6.2831853F;
+        float rad = amp * (0.80F + 0.20F * smoothShake(22, t, speed));
+        e.setRoll(e.getRoll() + bobR + amp * 0.9F * (float) Math.sin(circPhase + 1.3F));
+        e.setYaw(e.getYaw() + bobX + rad * 0.45F * (float) Math.sin(circPhase));
+        e.setPitch(e.getPitch() + bobY + rad * 0.45F * (float) Math.cos(circPhase));
     }
 
     @SubscribeEvent
@@ -1221,7 +1230,7 @@ public class CameraEffects {
         if (level > 0F) {
             // the FOV pulses smoothly (two slow-to-medium waves, every rendered frame), strong at high stages
             double ft = System.currentTimeMillis() / 1000.0;
-            float wave = 0.65F * smoothShake(24, ft, 0.9F + 0.5F * level) + 0.45F * smoothShake(25, ft, 1.2F + 0.6F * level);
+            float wave = 0.90F * (float) Math.sin(circPhase + 2.2F) + 0.25F * smoothShake(25, ft, 0.9F + 0.5F * level);
             fov += VIEW_FOV_WOBBLE * (1F + 0.8F * smooth(0.40F, 0.75F, sanity)) * level * Mth.clamp(level / 0.08F, 0F, 1F) * wave;
         }
         e.setFOV(fov);

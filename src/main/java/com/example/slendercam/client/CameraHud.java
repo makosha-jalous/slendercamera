@@ -55,9 +55,9 @@ public class CameraHud {
     private static final int BLINK_MS = 500;             // REC text blink interval
     private static final float CELL = 3F;                // bending mesh cell size in reference pixels
 
-    private static final int GRAY_EDGE = 0xB8FFFFFF;   // outlines of battery and zoom bar
-    private static final int GRAY_LIT = 0xCCFFFFFF;    // lit pixels, timer digits
-    private static final int FRAME = 0x9AFFFFFF;
+    private static final int GRAY_EDGE = 0x6EFFFFFF;   // outlines of battery and zoom bar
+    private static final int GRAY_LIT = 0x7AFFFFFF;    // lit pixels, timer digits
+    private static final int FRAME = 0x5CFFFFFF;
     private static final int FRAME_CLEAR = 0x00FFFFFF;
     private static final int RED = 0xFFB00000;         // dark red like in the game
 
@@ -188,7 +188,9 @@ public class CameraHud {
     /** how much of the displacement of the frame the picture follows (1 = exactly as much as the frame). */
     private static final float SCENE_BEND = 0.75F;
     /** a light, constant fish-eye of the picture (the lens of the camera): 0 = none. */
-    private static final float FISHEYE = 0.040F;
+    private static final float FISHEYE = 0F;        // the picture itself is not bent by a lens
+    /** a very light fish-eye of the frame, the cross and the other white elements only (the sides bow outwards). */
+    private static final float LENS = 0.05F;
     private static final int SCENE_COLS = 40, SCENE_ROWS = 24;
     private static RenderTarget sceneCopy;
 
@@ -331,6 +333,14 @@ public class CameraHud {
     }
 
     private static void vtx(float x, float y, int argb) {
+        if (LENS > 0F) {
+            float cx = (restL + restR) * 0.5F, cy = (restT + restB) * 0.5F;
+            float hx = Math.max(1F, (restR - restL) * 0.5F), hy = Math.max(1F, (restB - restT) * 0.5F);
+            float dx = (x - cx) / hx, dy = (y - cy) / hy;
+            float fe = 1F + LENS * (1F - dx * dx - 0.35F * dy * dy);
+            x = cx + (x - cx) * fe;
+            y = cy + (y - cy) * fe;
+        }
         qb.vertex(qm, x, y, 0F)
                 .color((argb >> 16) & 255, (argb >> 8) & 255, argb & 255, (argb >>> 24) & 255)
                 .endVertex();
@@ -569,7 +579,7 @@ public class CameraHud {
 
     private static void drawCross(int refW) {
         int mx = refW / 2, my = REF_H / 2;
-        int c = 0x78FFFFFF;
+        int c = 0x48FFFFFF;
         wRect(mx - 15, my, mx + 16, my + 1, c);
         wRect(mx, my - 15, mx + 1, my + 16, c);
     }
@@ -642,6 +652,7 @@ public class CameraHud {
             alpha *= 0.78F + 0.42F * RND.nextFloat();
         }
         alpha = Math.min(0.97F, alpha);
+        if (fl <= 0F) alpha *= 0.70F;     // the general noise of the camera: 30% more transparent
 
         double g = mc.getWindow().getGuiScale();
         int regionW = Math.max(1, (int) Math.round(w * g / GRAIN_PIXEL_SIZE));
