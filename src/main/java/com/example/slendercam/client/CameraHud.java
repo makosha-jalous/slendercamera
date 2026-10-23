@@ -193,6 +193,7 @@ public class CameraHud {
     private static final float LENS = 0.05F;
     private static final int SCENE_COLS = 40, SCENE_ROWS = 24;
     private static RenderTarget sceneCopy;
+    private static float caScale;
 
     /**
      * Copies the finished picture of the game into a second buffer and draws it back as a net of small quads: every
@@ -202,7 +203,8 @@ public class CameraHud {
     private static void drawBentScene(PoseStack ps, int refW) {
         float moved = Math.abs(defL - restL) + Math.abs(defR - restR) + Math.abs(defT - restT) + Math.abs(defB - restB)
                 + Math.abs(vBend) + Math.abs(hBend);
-        if (moved < 0.5F && FISHEYE <= 0F) return;
+        float ca = CameraEffects.chromatic();
+        if (moved < 0.5F && FISHEYE <= 0F && ca <= 0.01F) return;
         try {
             Minecraft mc = Minecraft.getInstance();
             RenderTarget main = mc.getMainRenderTarget();
@@ -222,27 +224,39 @@ public class CameraHud {
             // the net: it reaches a bit beyond the screen, the picture edge is stretched there (no gaps)
             RenderSystem.disableBlend();
             RenderSystem.disableCull();
-            RenderSystem.colorMask(true, true, true, false);
             RenderSystem.setShader(GameRenderer::getPositionTexShader);
             RenderSystem.setShaderColor(1F, 1F, 1F, 1F);
             RenderSystem.setShaderTexture(0, sceneCopy.getColorTextureId());
-            BufferBuilder b = Tesselator.getInstance().getBuilder();
-            b.begin(VertexFormat.Mode.QUADS, DefaultVertexFormat.POSITION_TEX);
             Matrix4f m = ps.last().pose();
             float x0 = -50F, x1 = refW + 50F, y0 = -35F, y1 = REF_H + 35F;
-            for (int j = 0; j < SCENE_ROWS; j++) {
-                float ya = y0 + (y1 - y0) * j / SCENE_ROWS;
-                float yb = y0 + (y1 - y0) * (j + 1) / SCENE_ROWS;
-                for (int i = 0; i < SCENE_COLS; i++) {
-                    float xa = x0 + (x1 - x0) * i / SCENE_COLS;
-                    float xb = x0 + (x1 - x0) * (i + 1) / SCENE_COLS;
-                    sceneVertex(b, m, xa, ya, refW);
-                    sceneVertex(b, m, xa, yb, refW);
-                    sceneVertex(b, m, xb, yb, refW);
-                    sceneVertex(b, m, xb, ya, refW);
+            // colour split: the red, green and blue channels are drawn one by one, a little bigger / same / smaller
+            boolean split = ca > 0.01F;
+            int passes = split ? 3 : 1;
+            for (int pass = 0; pass < passes; pass++) {
+                if (split) {
+                    RenderSystem.colorMask(pass == 0, pass == 1, pass == 2, false);
+                    caScale = (pass == 0 ? 1F : pass == 2 ? -1F : 0F) * ca * 0.013F;
+                } else {
+                    RenderSystem.colorMask(true, true, true, false);
+                    caScale = 0F;
                 }
+                BufferBuilder b = Tesselator.getInstance().getBuilder();
+                b.begin(VertexFormat.Mode.QUADS, DefaultVertexFormat.POSITION_TEX);
+                for (int j = 0; j < SCENE_ROWS; j++) {
+                    float ya = y0 + (y1 - y0) * j / SCENE_ROWS;
+                    float yb = y0 + (y1 - y0) * (j + 1) / SCENE_ROWS;
+                    for (int i = 0; i < SCENE_COLS; i++) {
+                        float xa = x0 + (x1 - x0) * i / SCENE_COLS;
+                        float xb = x0 + (x1 - x0) * (i + 1) / SCENE_COLS;
+                        sceneVertex(b, m, xa, ya, refW);
+                        sceneVertex(b, m, xa, yb, refW);
+                        sceneVertex(b, m, xb, yb, refW);
+                        sceneVertex(b, m, xb, ya, refW);
+                    }
+                }
+                BufferUploader.drawWithShader(b.end());
             }
-            BufferUploader.drawWithShader(b.end());
+            caScale = 0F;
         } catch (Throwable ignored) {
             // never break the game because of a graphics detail
         } finally {
@@ -257,7 +271,7 @@ public class CameraHud {
         // barrel distortion around the middle of the screen
         float dxn = (px - refW * 0.5F) / (refW * 0.5F), dyn = (py - REF_H * 0.5F) / (REF_H * 0.5F);
         // barrel (fish-eye): the middle is magnified, the sides are squeezed a little; stronger on the left / right sides
-        float fe = 1F - FISHEYE * (dxn * dxn + 0.35F * dyn * dyn);
+        float fe = 1F - FISHEYE * (dxn * dxn + 0.35F * dyn * dyn) + caScale;
         px = refW * 0.5F + (px - refW * 0.5F) * fe;
         py = REF_H * 0.5F + (py - REF_H * 0.5F) * fe;
         float u = Mth.clamp(rx / refW, 0F, 1F);

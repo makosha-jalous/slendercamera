@@ -1114,6 +1114,28 @@ public class CameraEffects {
     }
 
     private static int lastStepK;
+    /**
+     * Colour split (chromatic aberration) of the picture 0..1, like the original's glitch: it flickers in short random
+     * bursts, the chance and the strength grow with the lost sanity.
+     */
+    public static float chromatic() {
+        float loss = Mth.clamp(sanity, 0F, 1F);
+        float gate = smooth(0.12F, 0.65F, loss);
+        if (gate <= 0.001F && flash <= 0.01F) return 0F;
+        long bucket = System.currentTimeMillis() / 60L;
+        float r1 = hash01(bucket * 7L + 3L), r2 = hash01(bucket * 13L + 5L);
+        float prob = 0.30F + 0.55F * loss;
+        float a = r1 < prob ? 0.35F + 0.65F * r2 : 0F;
+        return Mth.clamp(a * gate + flash * 0.8F, 0F, 1F);
+    }
+
+    private static float hash01(long n) {
+        n = (n ^ (n >>> 15)) * 0x2C1B3C6DL;
+        n = (n ^ (n >>> 12)) * 0x297A2D39L;
+        n ^= n >>> 15;
+        return (n & 0xFFFFFFL) / (float) 0x1000000;
+    }
+
     private static float circPhase;
     private static long circNs;
     private static boolean ownStep;
@@ -1213,9 +1235,14 @@ public class CameraEffects {
         circPhase += cdt * 6.2831853F * (0.45F + 0.75F * sev);
         if (circPhase > 6.2831853F) circPhase -= 6.2831853F;
         float rad = amp * (0.80F + 0.20F * smoothShake(22, t, speed));
+        // two layers like in the original: a big slow wandering + a small fast tremor (both grow with the lost sanity)
+        float bigYaw = amp * 0.40F * smoothShake(41, t, 0.5F);
+        float bigPitch = amp * 0.40F * smoothShake(42, t, 0.5F);
+        float smallYaw = amp * 0.13F * smoothShake(43, t, 2.2F);
+        float smallPitch = amp * 0.13F * smoothShake(44, t, 2.2F);
         e.setRoll(e.getRoll() + bobR + amp * 0.9F * (float) Math.sin(circPhase + 1.3F));
-        e.setYaw(e.getYaw() + bobX + rad * 0.45F * (float) Math.sin(circPhase));
-        e.setPitch(e.getPitch() + bobY + rad * 0.45F * (float) Math.cos(circPhase));
+        e.setYaw(e.getYaw() + bobX + rad * 0.30F * (float) Math.sin(circPhase) + bigYaw + smallYaw);
+        e.setPitch(e.getPitch() + bobY + rad * 0.30F * (float) Math.cos(circPhase) + bigPitch + smallPitch);
     }
 
     @SubscribeEvent
