@@ -1107,9 +1107,46 @@ public class CameraEffects {
         float k = Math.min(1F, dt * 8F);
         ownMove += ((moving ? 1F : 0F) - ownMove) * k;
         ownRun += ((running ? 1F : 0F) - ownRun) * k;
-        if (moving) ownPhase += dt * 1.4F * (float) sp * 20F;
+        // fixed pace: one swing = one step: walking 1.5 s, running 0.5 s
+        if (moving) ownPhase += dt * Mth.lerp(ownRun, 6.2831853F / 1.5F, 6.2831853F / 0.5F);
         if (ownPhase > 6.2831853F) ownPhase -= 6.2831853F;
         return new float[]{ownPhase, ownMove, ownRun, 1F};
+    }
+
+    private static float lastStepPhase;
+    private static boolean ownStep;
+
+    /** Our own footsteps: one step per swing (walking 1.5 s, running 0.5 s); the vanilla steps near the player are muted. */
+    @SubscribeEvent
+    public static void onClientTickSteps(net.minecraftforge.event.TickEvent.ClientTickEvent e) {
+        if (e.phase != net.minecraftforge.event.TickEvent.Phase.END) return;
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.player == null || mc.level == null || mc.isPaused() || !CameraHud.active()) return;
+        float[] g = gaitState(mc);
+        boolean stepNow = g[0] < lastStepPhase - 3F;
+        lastStepPhase = g[0];
+        if (!stepNow || g[1] < 0.5F || !mc.player.isOnGround() || mc.player.isInWater()) return;
+        net.minecraft.core.BlockPos pos = mc.player.getOnPos();
+        net.minecraft.world.level.block.state.BlockState st = mc.level.getBlockState(pos);
+        if (st.isAir()) return;
+        net.minecraft.world.level.block.SoundType t = st.getSoundType(mc.level, pos, mc.player);
+        ownStep = true;
+        try {
+            mc.level.playLocalSound(mc.player.getX(), mc.player.getY(), mc.player.getZ(), t.getStepSound(),
+                    SoundSource.PLAYERS, t.getVolume() * 0.15F * (mc.player.isCrouching() ? 0.5F : 1F), t.getPitch(), false);
+        } finally {
+            ownStep = false;
+        }
+    }
+
+    @SubscribeEvent
+    public static void onPlaySoundMuteSteps(net.minecraftforge.client.event.sound.PlaySoundEvent e) {
+        if (ownStep || !CameraHud.active()) return;
+        net.minecraft.client.resources.sounds.SoundInstance si = e.getSound();
+        Minecraft mc = Minecraft.getInstance();
+        if (si == null || mc.player == null || !si.getLocation().getPath().endsWith(".step")) return;
+        double dx = si.getX() - mc.player.getX(), dy = si.getY() - mc.player.getY(), dz = si.getZ() - mc.player.getZ();
+        if (dx * dx + dy * dy + dz * dz < 4.0) e.setSound(null);
     }
 
     @SubscribeEvent
@@ -1138,6 +1175,17 @@ public class CameraEffects {
         bobX = Mth.lerp(gRun, walkX, runX) * gMove + idleX * idleK;
         bobY = Mth.lerp(gRun, walkY, runY) * gMove + idleY * idleK;
         bobR = -(float) Math.sin(gp) * Mth.lerp(gRun, 0.9F, 2.2F) * gMove + idleX * idleK;
+
+        // the vanilla view bob is removed (it would add its own tilt out of step with ours)
+        if (mc.options.bobView().get() && mc.getCameraEntity() instanceof net.minecraft.world.entity.player.Player bp) {
+            float pt = (float) e.getPartialTick();
+            float f = bp.walkDist - bp.walkDistO;
+            float f1 = -(bp.walkDist + f * pt);
+            float f2 = Mth.lerp(pt, bp.oBob, bp.bob);
+            float pi = (float) Math.PI;
+            bobR -= Mth.sin(f1 * pi) * f2 * 3.0F;
+            bobY -= Math.abs(Mth.cos(f1 * pi - 0.2F) * f2) * 5.0F;
+        }
 
         float level = viewLevel >= 0.01F ? viewLevel : 0F;
         float amp = 0F;
