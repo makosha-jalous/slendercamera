@@ -137,6 +137,14 @@ public class CameraEffects {
     /** bends in the low stages: one every 150-205 ms = 5-6 a second. */
     private static final int SYNC_BEND_MIN_MS = 150, SYNC_BEND_RANDOM_MS = 56;
     private static final float LIGHT_VOLUME = 1.0F;
+    /**
+     * NEW technique of the original game for static_light: the WHOLE track (static_light_full.ogg) plays all the time and
+     * every game tick a dice decides if it is heard or muted: it is heard with the chance (loss + 35) / 100, where
+     * "loss" is the sanity loss in percent (the original: Random.value < (glitchIntensity + 35) / 100). Far away he
+     * chops the sound a lot, from 65 % loss it is heard all the time. The bend of the frame starts with every new
+     * "heard" piece. false = the old way: short cut pieces (staticlight001..113) one after another (kept, only switched off).
+     */
+    private static final boolean GATED_LIGHT = true;
     /** the stutter goes on while the sanity is not back at (almost) zero. */
     private static final float TWITCH_END_SANITY = 0.004F;
 
@@ -617,6 +625,7 @@ public class CameraEffects {
      * Returns the interval (ms) of a piece that started in this very call, or 0 when no piece started.
      */
     private static long updateStutter(long now) {
+        if (GATED_LIGHT) return updateGatedStutter(now);
         float s = Mth.clamp(sanity, 0F, 1F);
         if (!seenNow && s < TWITCH_END_SANITY) {
             pulseNextMs = 0L;
@@ -629,6 +638,59 @@ public class CameraEffects {
         long interval = PIECE_INTERVAL_MIN + HUD_RNG.nextInt(PIECE_INTERVAL_RANDOM);
         pulseNextMs = now + interval;
         return interval;
+    }
+
+    // ---- gated static_light (the whole track, muted and unmuted by a dice every tick) ----
+    private static volatile boolean lightGateOn;
+    private static volatile boolean gatePieceFlag;
+    private static volatile float lightLevel;
+    private static volatile long lastGateMs;
+    private static LightGateLoop lightLoop;
+
+    /** the looping whole track. The dice is thrown INSIDE its tick, so exactly one throw per game tick, no lost throws. */
+    private static class LightGateLoop extends AbstractTickableSoundInstance {
+        LightGateLoop() {
+            super(new SoundEvent(new net.minecraft.resources.ResourceLocation("slendercamfx", "static_light_full")),
+                    SoundSource.MASTER, RandomSource.create());
+            this.looping = true; this.delay = 0; this.volume = 0.0001F;
+            this.relative = true; this.attenuation = SoundInstance.Attenuation.NONE;
+        }
+        @Override public boolean canStartSilent() { return true; }
+        @Override public void tick() {
+            if (System.currentTimeMillis() - lastGateMs > 250L) {     // the stutter is over (or the camera is down)
+                lightGateOn = false;
+                this.stop();
+                return;
+            }
+            float loss = Mth.clamp(lightLevel, 0F, 1F) * 100F;
+            boolean was = lightGateOn;
+            lightGateOn = HUD_RNG.nextFloat() < (loss + 35F) / 100F;     // the dice of the original game
+            if (lightGateOn && !was) gatePieceFlag = true;               // a new heard piece starts
+            this.volume = lightGateOn
+                    ? Math.max(LIGHT_VOLUME * (0.55F + 0.45F * lightLevel) * MASTER_VOLUME, 0.0001F)
+                    : 0.0001F;
+        }
+    }
+
+    /** same rules as before (runs while he is seen and until the sanity is back at zero), but with the gated whole track. */
+    private static long updateGatedStutter(long now) {
+        float s = Mth.clamp(sanity, 0F, 1F);
+        if (!seenNow && s < TWITCH_END_SANITY) {
+            pulseNextMs = 0L;
+            return 0L;
+        }
+        lightLevel = Math.max(s, 0.05F);
+        lastGateMs = now;
+        SoundManager sm = Minecraft.getInstance().getSoundManager();
+        if (needsStart(sm, lightLoop)) {
+            lightLoop = new LightGateLoop();
+            startLoop(sm, lightLoop);
+        }
+        if (gatePieceFlag) {
+            gatePieceFlag = false;
+            return PIECE_INTERVAL_MIN + HUD_RNG.nextInt(PIECE_INTERVAL_RANDOM);   // the frame bends with every new piece
+        }
+        return 0L;
     }
 
     /** the view shaking is driven by values that are smoothed every RENDERED frame (not only every game tick). */
