@@ -411,6 +411,13 @@ public class CameraEffects {
             if (dn != null) dp = dn.intValue();
         }
         deathPhase = dp;
+        // watcher mode (/slender watch): the Slenderman mod sends aggression -1. No noise, no bend, no breathing for him,
+        // only the short glitch when he vanishes (see the blip below).
+        boolean watcher = false;
+        if (sl != null) {
+            Number an = callNumber(sl, "getAggression");
+            watcher = an != null && an.floatValue() < 0F;
+        }
         deathBlackTicks = dp == 2 ? deathBlackTicks + 1 : 0;
         boolean turn = dp == 1 && cam;
         if (dp >= 2) cam = false;          // the black screen and everything after it: the Slenderman mod cuts the sounds, the camera is silent
@@ -420,11 +427,11 @@ public class CameraEffects {
         boolean seen = false;
         if (sl != null) {
             dist = Math.sqrt(best);
-            slenderDist = dist;
-            seen = cam && dist < SEEN_RANGE && isLookingAt(mc.player, sl);
-            rawSanity = readSanity(sl);
+            if (!watcher) slenderDist = dist;
+            seen = !watcher && cam && dist < SEEN_RANGE && isLookingAt(mc.player, sl);
+            rawSanity = watcher ? 0F : readSanity(sl);
             noEntityRate = 0F;
-            checkTeleport(mc, sl, dist, cam);
+            checkTeleport(mc, sl, dist, cam && !watcher);
         } else {
             lastId = null;
             // he is not on the client (parked far away): the sanity keeps coming back at the server speed
@@ -443,7 +450,9 @@ public class CameraEffects {
                     lastBlip = b;
                     if (cam && dist < 200.0D) {
                         blipEndMs = System.currentTimeMillis() + 60L;
-                        playLightPiece(1.0F);
+                        // one short piece of the static glitch (glitch_short = pieces of staticglitch)
+                        mc.getSoundManager().play(SimpleSoundInstance.forUI(SlenderCamMod.GLITCH_SHORT.get(),
+                                0.95F + HUD_RNG.nextFloat() * 0.1F, 0.9F));
                         newPose(1.0F);
                     }
                 }
@@ -462,7 +471,7 @@ public class CameraEffects {
         sanity += (rawForCam - sanity) * 0.30F;
         if (sanity < 0.001F) sanity = 0F;
 
-        boolean near = cam && sl != null && dist < NEAR_DIST;
+        boolean near = cam && sl != null && !watcher && dist < NEAR_DIST;
 
         // grain and breathing
         INTENSITY.update(sanity, RISE, 1F, BREATH_FADE_TICKS);
@@ -473,7 +482,7 @@ public class CameraEffects {
         midShare = smooth(MEDIUM_CONT_FROM, MEDIUM_CONT_TO, sanity);
         MID.update(midGoal, turn ? 0.5F : 0.35F, 1F, MID_FADE_TICKS);
 
-        float proxGoal = cam && sl != null ? 1F - (float) Mth.clamp((dist - 2.5) / 60.0, 0.0, 1.0) : 0F;
+        float proxGoal = cam && sl != null && !watcher ? 1F - (float) Mth.clamp((dist - 2.5) / 60.0, 0.0, 1.0) : 0F;
         PROX.update(proxGoal, 0.10F, 1F, HUD_FADE_TICKS + FOV_LAG_TICKS);
 
         // static_heavy: grows with the sanity loss, and earlier when he is close
