@@ -110,6 +110,17 @@ public class CameraEffects {
 
     private static final float VIEW_SHAKE_DEG = 1.9F;
     private static final float VIEW_FOV_WOBBLE = 4.5F;
+    /** radius of the shaking circle in degrees. It is the SAME at every stage; only the speed and the tremor change. */
+    private static final float VIEW_RADIUS = 0.9F;
+    /** how much the roll (tilt) follows the circle. */
+    private static final float VIEW_ROLL = 0.9F;
+    /** turns of the circle per second: far away / when the sanity is almost gone. */
+    private static final float VIEW_TURNS_FAR = 0.30F;
+    private static final float VIEW_TURNS_NEAR = 6.5F;
+    /** the largest share of the fast tremor in the circle (0 = a clean circle, 1 = only random trembling). */
+    private static final float VIEW_TREMBLE_MAX = 0.55F;
+    /** size of the pulse of the field of view (degrees), also constant. */
+    private static final float VIEW_FOV_PULSE = 1.2F;
 
     // ---- stutter (static_light), bend of the interface, medium static, breathing ----
     // SOUND: staticlight.ogg is cut into pieces of 120..150 ms (staticlight01..59). A piece plays, then a pause of
@@ -1147,6 +1158,14 @@ public class CameraEffects {
         return (n & 0xFFFFFFL) / (float) 0x1000000;
     }
 
+    /** smooth fast trembling -1..1 (three fast sines, 17-40 Hz): different for every seed, no jumps between frames. */
+    private static float fastNoise(double tSec, int seed) {
+        double a = tSec * Math.PI * 2.0;
+        return (float) (0.50 * Math.sin(a * (17.0 + seed % 5) + seed * 1.7)
+                + 0.32 * Math.sin(a * (26.0 + seed % 7) + seed * 2.3)
+                + 0.18 * Math.sin(a * (38.0 + seed % 3) + seed * 3.1));
+    }
+
     private static float circPhase, circSample, tremX, tremY;
     private static long circNextMs;
     private static long circNs;
@@ -1225,39 +1244,36 @@ public class CameraEffects {
             bobY -= Math.abs(Mth.cos(f1 * pi - 0.2F) * f2) * 5.0F;
         }
 
-        // ---- shaking of the view, made from scratch: it depends on the lost sanity.
-        // Light and simple at first, stronger and stronger when the sanity is critical. It is mostly a TILT around the
-        // middle of the screen (the centre hardly moves); smooth sines of the real time, so it is smooth at any FPS.
-        float level = viewLevel >= 0.01F ? viewLevel : 0F;
-        float loss = Mth.clamp(sanity, 0F, 1F);
-        float sev = Mth.clamp(loss * 0.85F + level * 0.35F * (0.5F + 0.5F * viewProx), 0F, 1F);
-        float amp = 0F;
-        if (sev > 0.01F) {
-            amp = (0.05F + 0.50F * sev * sev + 1.70F * sev * sev * sev * sev) * Mth.clamp(sev / 0.06F, 0F, 1F);
-        }
-        if (tpActive()) amp += 0.6F;
-        amp += flash * 1.5F;
-
-        double t = now / 1000.0;
-        float speed = 0.8F + 0.9F * sev;
-        // the shaking goes round in a small circle (the pace follows the lost sanity), its size breathes a little
+        // ---- shaking of the view: a small trembling CIRCLE around the middle of the screen.
+        // The size of the circle is always the same (VIEW_RADIUS). Only the INTENSITY changes with the sanity loss
+        // (the closer he is, the more sanity is lost): far away it turns slowly and smoothly and is hardly visible,
+        // close it spins fast and trembles hard. It calms down together with the sanity.
+        float sev = Mth.clamp(sanity, 0F, 1F);
+        float on = smooth(0.0F, 0.04F, sev);                    // no jump when it starts or ends
         long nowNs = System.nanoTime();
         float cdt = circNs == 0 ? 0.016F : Math.min(0.05F, (nowNs - circNs) / 1e9F);
         circNs = nowNs;
-        circPhase += cdt * 6.2831853F * (0.45F + 0.75F * sev);
+        float turns = Mth.lerp((float) Math.pow(sev, 1.2), VIEW_TURNS_FAR, VIEW_TURNS_NEAR);   // turns of the circle per second
+        circPhase += cdt * 6.2831853F * turns;
         if (circPhase > 6.2831853F) circPhase -= 6.2831853F;
-        float rad = amp * (0.80F + 0.20F * smoothShake(22, t, speed));
-        // the picture shakes in circles, jerky (a new position about every 40-55 ms), not too strong; the centre only
-        // trembles a little
-        if (now >= circNextMs) {
-            circNextMs = now + 40L + HUD_RNG.nextInt(16);
-            circSample = circPhase + (HUD_RNG.nextFloat() - 0.5F) * 0.7F;
-            tremX = (HUD_RNG.nextFloat() - 0.5F) * 2F;
-            tremY = (HUD_RNG.nextFloat() - 0.5F) * 2F;
+        // share of the fast tremor: none far away (smooth circle), a lot when close (shaky circle)
+        float tremble = smooth(0.12F, 0.85F, sev) * VIEW_TREMBLE_MAX;
+        double t = now / 1000.0;
+        float nx = fastNoise(t, 11), ny = fastNoise(t, 23), nr = fastNoise(t, 37);
+        tremX = nx;
+        tremY = ny;
+        float ox = Mth.lerp(tremble, (float) Math.cos(circPhase), nx);
+        float oy = Mth.lerp(tremble, (float) Math.sin(circPhase), ny);
+        float olen = (float) Math.sqrt(ox * ox + oy * oy);
+        if (olen > 1F) {                                        // never outside the circle: the radius stays the same
+            ox /= olen;
+            oy /= olen;
         }
-        e.setRoll(e.getRoll() + bobR + amp * 0.9F * (float) Math.sin(circSample + 1.3F));
-        e.setYaw(e.getYaw() + bobX + rad * 0.50F * (float) Math.sin(circSample) + amp * 0.06F * tremX);
-        e.setPitch(e.getPitch() + bobY + rad * 0.50F * (float) Math.cos(circSample) + amp * 0.06F * tremY);
+        float r = VIEW_RADIUS * on;
+        float extra = (tpActive() ? 0.6F : 0F) + flash * 1.5F;   // short jolts (teleport, flash), not part of the circle
+        e.setYaw(e.getYaw() + bobX + r * ox + extra * 0.5F * nx);
+        e.setPitch(e.getPitch() + bobY + r * oy + extra * 0.5F * ny);
+        e.setRoll(e.getRoll() + bobR + r * VIEW_ROLL * Mth.lerp(tremble, (float) Math.sin(circPhase + 1.3F), nr) + extra * 0.4F * nr);
     }
 
     @SubscribeEvent
@@ -1268,13 +1284,8 @@ public class CameraEffects {
         if (z > 0.001F) {
             fov = fov / (1.0 + (ZOOM_MAX - 1.0) * z);
         }
-        float level = viewFov >= 0.01F ? viewFov : 0F;
-        if (level > 0F) {
-            // the FOV pulses smoothly (two slow-to-medium waves, every rendered frame), strong at high stages
-            double ft = System.currentTimeMillis() / 1000.0;
-            float wave = 0.90F * (float) Math.sin(circPhase + 2.2F) + 0.25F * smoothShake(25, ft, 0.9F + 0.5F * level);
-            fov += VIEW_FOV_WOBBLE * (1F + 0.8F * smooth(0.40F, 0.75F, sanity)) * level * Mth.clamp(level / 0.08F, 0F, 1F) * wave;
-        }
+        // the view "breathes" with the same circle (the same size always, only faster when more sanity is lost)
+        fov += VIEW_FOV_PULSE * smooth(0.0F, 0.04F, sanity) * (float) Math.sin(2.0F * circPhase + 2.2F);
         // a slight zoom in that grows with the lost sanity
         fov -= 3.5F * smooth(0.15F, 1.0F, sanity) * (0.85F + 0.15F * Math.abs(tremX));
         e.setFOV(fov);
