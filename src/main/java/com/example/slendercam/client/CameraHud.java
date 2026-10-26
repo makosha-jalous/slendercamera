@@ -190,8 +190,11 @@ public class CameraHud {
     /** a light, constant fish-eye of the picture (the lens of the camera): 0 = none. */
     private static final float FISHEYE = 0F;        // the picture itself is not bent by a lens
     /** a very light fish-eye of the frame, the cross and the other white elements only (the sides bow outwards). */
-    private static final float LENS = 0.01F;
+    private static final float LENS = 0.03F;
     private static final int SCENE_COLS = 40, SCENE_ROWS = 24;
+    /** colour split (red / blue pushed apart, as a share of the picture size): at the weakest / the strongest moment. Bigger = more stretched. */
+    private static final float CA_BASE = 0.020F;
+    private static final float CA_EXTRA = 0.030F;
     private static RenderTarget sceneCopy;
     private static float caScale;
 
@@ -235,7 +238,7 @@ public class CameraHud {
             for (int pass = 0; pass < passes; pass++) {
                 if (split) {
                     RenderSystem.colorMask(pass == 0, pass == 1, pass == 2, false);
-                    caScale = (pass == 0 ? 1F : pass == 2 ? -1F : 0F) * ca * 0.013F;
+                    caScale = (pass == 0 ? 1F : pass == 2 ? -1F : 0F) * ca * (CA_BASE + CA_EXTRA * ca);
                 } else {
                     RenderSystem.colorMask(true, true, true, false);
                     caScale = 0F;

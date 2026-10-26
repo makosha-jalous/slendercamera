@@ -1220,12 +1220,12 @@ public class CameraEffects {
      */
     public static float chromatic() {
         float loss = Mth.clamp(sanity, 0F, 1F);
-        float gate = smooth(0.12F, 0.65F, loss);
+        float gate = smooth(0.06F, 0.50F, loss);
         if (gate <= 0.001F && flash <= 0.01F) return 0F;
         long bucket = System.currentTimeMillis() / 60L;
         float r1 = hash01(bucket * 7L + 3L), r2 = hash01(bucket * 13L + 5L);
-        float prob = 0.30F + 0.55F * loss;
-        float a = r1 < prob ? 0.35F + 0.65F * r2 : 0F;
+        float prob = 0.45F + 0.50F * loss;
+        float a = r1 < prob ? 0.50F + 0.50F * r2 : 0F;
         return Mth.clamp(a * gate + flash * 0.8F, 0F, 1F);
     }
 
@@ -1365,12 +1365,8 @@ public class CameraEffects {
             vanillaBobSwitched = true;
             mc.options.bobView().set(false);
         }
+        // the vanilla "FOV effects" stay: the view widens a little when running (and narrows with Slowness), as in the game
         double fov = e.getFOV();
-        // The vanilla "FOV effects" (wider when sprinting, narrower with Slowness) are blocked too: the field of view stays
-        // exactly the one from the options (not under water / lava, there the game's own value is kept).
-        if (mc.gameRenderer.getMainCamera().getFluidInCamera() == net.minecraft.world.level.material.FogType.NONE) {
-            fov = mc.options.fov().get();
-        }
         float z = zoom((float) e.getPartialTick());
         if (z > 0.001F) {
             fov = fov / (1.0 + (ZOOM_MAX - 1.0) * z);
