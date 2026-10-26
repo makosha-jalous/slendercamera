@@ -111,6 +111,12 @@ public class CameraEffects {
     private static final float VIEW_SHAKE_DEG = 1.9F;
     private static final float VIEW_FOV_WOBBLE = 4.5F;
     /** radius of the shaking circle in degrees. It is the SAME at every stage; only the speed and the tremor change. */
+    /** walking: the up-down bounce of the view (degrees, whole range) and the rocking of the picture left-right (degrees). */
+    private static final float WALK_BOB_DEG = 0.55F;
+    private static final float WALK_ROCK_DEG = 0.7F;
+    /** running: stronger. */
+    private static final float RUN_BOB_DEG = 1.5F;
+    private static final float RUN_ROCK_DEG = 1.6F;
     private static final float VIEW_RADIUS = 0.9F;
     /** how much the roll (tilt) follows the circle. */
     private static final float VIEW_ROLL = 0.9F;
@@ -1285,15 +1291,19 @@ public class CameraEffects {
         float idleX = (float) Math.sin(now * 0.002) * 0.25F;
         float idleY = (float) Math.cos(now * 0.0015) * 0.15F;
         float idleK = 1F - gMove;
-        // walking: a wave (side to side + a small snake-like up-down wave); running: a wide swing along an upper arc
-        // the view turns the same way as the hand moves (both left, both right); the tilt follows the shader pack
-        float walkX = (float) Math.sin(gp) * 0.9F;
-        float walkY = (float) Math.sin(gp) * (float) Math.sin(gp) * 0.8F - 0.3F;     // a smaller upper arc
-        float runX = (float) Math.sin(gp) * 2.6F;
-        float runY = (float) Math.sin(gp) * (float) Math.sin(gp) * 1.5F - 0.5F;   // the sides are lower than the middle
-        bobX = Mth.lerp(gRun, walkX, runX) * gMove + idleX * idleK;
+        // The CENTRE of the screen never moves sideways. While walking / running only
+        //  - the view bobs up and down (a small bounce at every step: two per full stride), and
+        //  - the picture rocks a little left and right (a tilt around the middle of the screen, once per stride).
+        // Both follow the real step phase (so Slowness 1 / 2 slows them down) and are stronger when running.
+        float s1 = (float) Math.sin(gp);
+        float bounce = s1 * s1 - 0.5F;                                       // -0.5..0.5, two bounces per stride
+        float walkY = bounce * WALK_BOB_DEG;
+        float runY = bounce * RUN_BOB_DEG;
+        float walkR = s1 * WALK_ROCK_DEG;
+        float runR = s1 * RUN_ROCK_DEG;
+        bobX = 0F;                                                           // no sideways turning of the view
         bobY = Mth.lerp(gRun, walkY, runY) * gMove + idleY * idleK;
-        bobR = (float) Math.sin(gp) * Mth.lerp(gRun, 0.9F, 2.2F) * gMove + idleX * idleK;
+        bobR = Mth.lerp(gRun, walkR, runR) * gMove + idleX * idleK;
 
         // the vanilla view bob is removed (it would add its own tilt out of step with ours)
         if (mc.options.bobView().get() && mc.getCameraEntity() instanceof net.minecraft.world.entity.player.Player bp) {
