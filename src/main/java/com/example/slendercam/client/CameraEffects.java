@@ -112,11 +112,21 @@ public class CameraEffects {
     private static final float VIEW_FOV_WOBBLE = 4.5F;
     /** radius of the shaking circle in degrees. It is the SAME at every stage; only the speed and the tremor change. */
     /** walking: the up-down bounce of the view (degrees, whole range) and the rocking of the picture left-right (degrees). */
-    private static final float WALK_BOB_DEG = 0.55F;
+    private static final float WALK_BOB_DEG = 1.2F;
     private static final float WALK_ROCK_DEG = 0.7F;
     /** running: stronger. */
-    private static final float RUN_BOB_DEG = 1.5F;
+    private static final float RUN_BOB_DEG = 2.8F;
     private static final float RUN_ROCK_DEG = 1.6F;
+    /** the figure eight of the close shaking: size (degrees, always the same) and speed (figures per second, far .. almost no sanity left). */
+    private static final float FIG_RADIUS = 1.1F;
+    private static final float FIG_TURNS_FAR = 1.5F;
+    private static final float FIG_TURNS_NEAR = 6.0F;
+    /** closer than FIG_DIST_NEAR (blocks) it is the figure eight, further than FIG_DIST_FAR it is the swaying, in between a mix. */
+    private static final float FIG_DIST_NEAR = 6F;
+    private static final float FIG_DIST_FAR = 18F;
+    /** the swaying far away: big slow layer and small faster layer (degrees). */
+    private static final float SWAY_BIG = 0.9F;
+    private static final float SWAY_SMALL = 0.22F;
     private static final float VIEW_RADIUS = 0.9F;
     /** how much the roll (tilt) follows the circle. */
     private static final float VIEW_ROLL = 0.9F;
@@ -1275,8 +1285,13 @@ public class CameraEffects {
 
     @SubscribeEvent
     public static void onCameraAngles(ViewportEvent.ComputeCameraAngles e) {
-        if (!CameraHud.active()) return;
         Minecraft mc = Minecraft.getInstance();
+        // the vanilla view bobbing was switched off for this frame's world render (see onFov): give the option back at once
+        if (vanillaBobSwitched) {
+            vanillaBobSwitched = false;
+            mc.options.bobView().set(true);
+        }
+        if (!CameraHud.active()) return;
         if (mc.player == null) return;
 
         long now = System.currentTimeMillis();
@@ -1305,61 +1320,61 @@ public class CameraEffects {
         bobY = Mth.lerp(gRun, walkY, runY) * gMove + idleY * idleK;
         bobR = Mth.lerp(gRun, walkR, runR) * gMove + idleX * idleK;
 
-        // the vanilla view bob is removed (it would add its own tilt out of step with ours)
-        if (mc.options.bobView().get() && mc.getCameraEntity() instanceof net.minecraft.world.entity.player.Player bp) {
-            float pt = (float) e.getPartialTick();
-            float f = bp.walkDist - bp.walkDistO;
-            float f1 = -(bp.walkDist + f * pt);
-            float f2 = Mth.lerp(pt, bp.oBob, bp.bob);
-            float pi = (float) Math.PI;
-            bobR -= Mth.sin(f1 * pi) * f2 * 3.0F;
-            bobY -= Math.abs(Mth.cos(f1 * pi - 0.2F) * f2) * 5.0F;
-        }
-
-        // ---- shaking of the view: a small trembling CIRCLE around the middle of the screen.
-        // The size of the circle is always the same (VIEW_RADIUS). Only the INTENSITY changes with the sanity loss
-        // (the closer he is, the more sanity is lost): far away it turns slowly and smoothly and is hardly visible,
-        // close it spins fast and trembles hard. It calms down together with the sanity.
+        // ---- shaking of the view (the picture only, no zoom): its shape depends on the distance to him, the strength on the sanity
+        //   CLOSE: the picture shakes very fast along a VERTICAL FIGURE EIGHT (the infinity sign standing up);
+        //   FAR:   while he is in view the camera just sways a little more: two layers of smooth noise, a big slow one
+        //          and a small faster one (like the CameraShake of the original game).
+        // The size of the figure is always the same, only the speed grows with the sanity loss. It dies away with the sanity.
         float sev = Mth.clamp(sanity, 0F, 1F);
         float on = smooth(0.0F, 0.04F, sev);                    // no jump when it starts or ends
         long nowNs = System.nanoTime();
         float cdt = circNs == 0 ? 0.016F : Math.min(0.05F, (nowNs - circNs) / 1e9F);
         circNs = nowNs;
-        float turns = Mth.lerp((float) Math.pow(sev, 1.2), VIEW_TURNS_FAR, VIEW_TURNS_NEAR);   // turns of the circle per second
+        float turns = Mth.lerp((float) Math.pow(sev, 1.2), FIG_TURNS_FAR, FIG_TURNS_NEAR);   // figures per second
         circPhase += cdt * 6.2831853F * turns;
         if (circPhase > 6.2831853F) circPhase -= 6.2831853F;
-        // share of the fast tremor: none far away (smooth circle), a lot when close (shaky circle)
-        float tremble = smooth(0.12F, 0.85F, sev) * VIEW_TREMBLE_MAX;
         double t = now / 1000.0;
-        float nx = fastNoise(t, 11), ny = fastNoise(t, 23), nr = fastNoise(t, 37);
-        tremX = nx;
-        tremY = ny;
-        float ox = Mth.lerp(tremble, (float) Math.cos(circPhase), nx);
-        float oy = Mth.lerp(tremble, (float) Math.sin(circPhase), ny);
-        float olen = (float) Math.sqrt(ox * ox + oy * oy);
-        if (olen > 1F) {                                        // never outside the circle: the radius stays the same
-            ox /= olen;
-            oy /= olen;
-        }
-        float r = VIEW_RADIUS * on;
-        float extra = (tpActive() ? 0.6F : 0F) + flash * 1.5F;   // short jolts (teleport, flash), not part of the circle
-        e.setYaw(e.getYaw() + bobX + r * ox + extra * 0.5F * nx);
-        e.setPitch(e.getPitch() + bobY + r * oy + extra * 0.5F * ny);
-        e.setRoll(e.getRoll() + bobR + r * VIEW_ROLL * Mth.lerp(tremble, (float) Math.sin(circPhase + 1.3F), nr) + extra * 0.4F * nr);
+        float closeK = 1F - smooth(FIG_DIST_NEAR, FIG_DIST_FAR, (float) slenderDist);       // 1 = close, 0 = far
+        // close: x = sin(2 phase), y = sin(phase) = a figure eight that stands up
+        float figX = (float) Math.sin(2.0 * circPhase) * FIG_RADIUS * on;
+        float figY = (float) Math.sin(circPhase) * FIG_RADIUS * on;
+        // far: the swaying, only while he is in view
+        float sway = seenGate * (0.40F + 0.60F * sev);
+        float swayX = (SWAY_BIG * smoothShake(31, t, 0.5F) + SWAY_SMALL * smoothShake(32, t, 2.0F)) * sway;
+        float swayY = (SWAY_BIG * smoothShake(33, t, 0.5F) + SWAY_SMALL * smoothShake(34, t, 2.0F)) * sway;
+        tremX = figX;
+        tremY = figY;
+        float nx = fastNoise(t, 11), ny = fastNoise(t, 23);
+        float extra = (tpActive() ? 0.6F : 0F) + flash * 1.5F;   // short jolts (teleport, flash), not part of the shaking
+        e.setYaw(e.getYaw() + bobX + Mth.lerp(closeK, swayX, figX) + extra * 0.5F * nx);
+        e.setPitch(e.getPitch() + bobY + Mth.lerp(closeK, swayY, figY) + extra * 0.5F * ny);
+        e.setRoll(e.getRoll() + bobR + extra * 0.4F * fastNoise(t, 37));
     }
+
+    /** true between onFov and onCameraAngles of one frame: the player's option "view bobbing" is switched off just for the world render. */
+    private static boolean vanillaBobSwitched;
 
     @SubscribeEvent
     public static void onFov(ViewportEvent.ComputeFov e) {
         if (!CameraHud.active() || !e.usedConfiguredFov()) return;
+        Minecraft mc = Minecraft.getInstance();
+        // The vanilla view bobbing (the lift and the tilt of every step) is blocked while the camera is up: it would
+        // work against our own bobbing. The game asks for the option AFTER this event and BEFORE onCameraAngles, so it is
+        // switched off here and given back there (the player's setting is never changed for good).
+        if (!vanillaBobSwitched && mc.options.bobView().get()) {
+            vanillaBobSwitched = true;
+            mc.options.bobView().set(false);
+        }
         double fov = e.getFOV();
+        // The vanilla "FOV effects" (wider when sprinting, narrower with Slowness) are blocked too: the field of view stays
+        // exactly the one from the options (not under water / lava, there the game's own value is kept).
+        if (mc.gameRenderer.getMainCamera().getFluidInCamera() == net.minecraft.world.level.material.FogType.NONE) {
+            fov = mc.options.fov().get();
+        }
         float z = zoom((float) e.getPartialTick());
         if (z > 0.001F) {
             fov = fov / (1.0 + (ZOOM_MAX - 1.0) * z);
         }
-        // the view "breathes" with the same circle (the same size always, only faster when more sanity is lost)
-        fov += VIEW_FOV_PULSE * smooth(0.0F, 0.04F, sanity) * (float) Math.sin(2.0F * circPhase + 2.2F);
-        // a slight zoom in that grows with the lost sanity
-        fov -= 3.5F * smooth(0.15F, 1.0F, sanity) * (0.85F + 0.15F * Math.abs(tremX));
         e.setFOV(fov);
     }
 }
