@@ -201,6 +201,8 @@ final class GlitchPort {
     private static final float LIGHT_VOLUME = 1.0F;
     private static final float MEDIUM_VOLUME = 1.0F;
     private static final float HEAVY_VOLUME = 1.0F;
+    /** loudness of the plain staticglitch layer on top of everything (the original: 0.5 at any loss above 0). 1.0 = as in the original, 0 = off. */
+    private static final float GLITCH_SCALE = 1.0F;
 
     private static GateLoop light, medium, heavy;
     private static SoundInstance glitchInst;
@@ -266,11 +268,11 @@ final class GlitchPort {
                 glitchInst = null;
             }
         }
-        if (diceOn && volG > 0F && glitchIntensity > 0F) {
+        if (diceOn && volG > 0F && GLITCH_SCALE > 0F && glitchIntensity > 0F) {
             long now = System.currentTimeMillis();
             boolean playing = glitchInst != null && (now - glitchStartMs < 400L || sm.isActive(glitchInst));
             if (!playing) {
-                glitchInst = SimpleSoundInstance.forUI(event("static_glitch_orig"), 1.0F, Math.max(0.0001F, volG * CameraEffects.MASTER_VOLUME));
+                glitchInst = SimpleSoundInstance.forUI(event("static_glitch_orig"), 1.0F, Math.max(0.0001F, volG * GLITCH_SCALE * CameraEffects.MASTER_VOLUME));
                 glitchStartMs = now;
                 sm.play(glitchInst);
             }
