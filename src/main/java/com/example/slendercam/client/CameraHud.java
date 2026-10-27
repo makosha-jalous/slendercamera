@@ -187,27 +187,47 @@ public class CameraHud {
 
     /** how much of the displacement of the frame the picture follows (1 = exactly as much as the frame). */
     private static final float SCENE_BEND = 0.75F;
-    /** a light, constant fish-eye of the picture (the lens of the camera): 0 = none. */
-    private static final float FISHEYE = 0F;        // the picture itself is not bent by a lens
+    /**
+     * FISHEYE of the original (Unity Fisheye image effect): the strengths come from the Glitch port (GlitchPort.strengthX/Y).
+     * The shader of the original: offset.x = (1 - y*y) * strengthY * x * K, offset.y = (1 - x*x) * strengthX * aspect * K * y,
+     * with x, y in -1..1 and K = 80/512. The picture is sampled at (uv - offset) and everything that is drawn before the effect
+     * (the interface frame) is moved by +offset. FISHEYE_GAIN = 1 is the original, bigger = stronger.
+     */
+    private static final float FISHEYE_GAIN = 1.0F;
+    private static final float FISH_K = 80F / 512F;
+    /** the largest colour split (share of the half width at the edge of the picture, red and blue go opposite ways). */
+    private static final float CA_MAX = 0.10F;
     /** a very light fish-eye of the frame, the cross and the other white elements only (the sides bow outwards). */
-    private static final float LENS = 0.01F;
-    private static final int SCENE_COLS = 40, SCENE_ROWS = 24;
-    /** colour split (red / blue pushed apart, as a share of the picture size): at the weakest / the strongest moment. Bigger = more stretched. */
-    private static final float CA_BASE = 0.020F;
-    private static final float CA_EXTRA = 0.030F;
+    private static final float LENS = 0.03F;
+    private static final int SCENE_COLS = 48, SCENE_ROWS = 28;
     private static RenderTarget sceneCopy;
     private static float caScale;
+    private static int curRefW = 739;
 
     /**
      * Copies the finished picture of the game into a second buffer and draws it back as a net of small quads: every
      * corner of the net is moved by the same warp() that bends the frame, so the picture follows the frame.
      * Nothing is done while the frame is straight.
      */
+    /** fisheye displacement (in reference pixels) of a source point (x, y): where it ends up on the screen is (x + dx, y + dy). */
+    private static void fishOffset(float x, float y, int refW, float[] out) {
+        float sx = GlitchPort.strengthX() * FISHEYE_GAIN, sy = GlitchPort.strengthY() * FISHEYE_GAIN;
+        if (sx == 0F && sy == 0F) { out[0] = 0F; out[1] = 0F; return; }
+        float cx = 2F * (x / refW) - 1F;
+        float cy = 2F * (1F - y / REF_H) - 1F;                 // y up, like Unity
+        float ar = refW / (float) REF_H;
+        float offX = (1F - cy * cy) * sy * FISH_K * cx;
+        float offY = (1F - cx * cx) * sx * ar * FISH_K * cy;
+        out[0] = offX * refW;
+        out[1] = -offY * REF_H;
+    }
+
     private static void drawBentScene(PoseStack ps, int refW) {
+        curRefW = refW;
         float moved = Math.abs(defL - restL) + Math.abs(defR - restR) + Math.abs(defT - restT) + Math.abs(defB - restB)
                 + Math.abs(vBend) + Math.abs(hBend);
         float ca = CameraEffects.chromatic();
-        if (moved < 0.5F && FISHEYE <= 0F && ca <= 0.01F) return;
+        if (moved < 0.5F && !GlitchPort.fisheyeActive() && ca <= 0.002F) return;
         try {
             Minecraft mc = Minecraft.getInstance();
             RenderTarget main = mc.getMainRenderTarget();
@@ -233,12 +253,12 @@ public class CameraHud {
             Matrix4f m = ps.last().pose();
             float x0 = -50F, x1 = refW + 50F, y0 = -35F, y1 = REF_H + 35F;
             // colour split: the red, green and blue channels are drawn one by one, a little bigger / same / smaller
-            boolean split = ca > 0.01F;
+            boolean split = ca > 0.002F;
             int passes = split ? 3 : 1;
             for (int pass = 0; pass < passes; pass++) {
                 if (split) {
                     RenderSystem.colorMask(pass == 0, pass == 1, pass == 2, false);
-                    caScale = (pass == 0 ? 1F : pass == 2 ? -1F : 0F) * ca * (CA_BASE + CA_EXTRA * ca);
+                    caScale = (pass == 0 ? 1F : pass == 2 ? -1F : 0F) * ca * CA_MAX;
                 } else {
                     RenderSystem.colorMask(true, true, true, false);
                     caScale = 0F;
@@ -271,14 +291,17 @@ public class CameraHud {
         warp(rx, ry, TMP_C);
         float px = rx + (TMP_C[0] - rx) * SCENE_BEND;
         float py = ry + (TMP_C[1] - ry) * SCENE_BEND;
-        // barrel distortion around the middle of the screen
+        // chromatic aberration of the original: the shift grows with the CUBE of the distance from the middle
+        // (Unity: uv - texel * chromaticAberration * coords * dot(coords, coords)); here red and blue go opposite ways
         float dxn = (px - refW * 0.5F) / (refW * 0.5F), dyn = (py - REF_H * 0.5F) / (REF_H * 0.5F);
-        // barrel (fish-eye): the middle is magnified, the sides are squeezed a little; stronger on the left / right sides
-        float fe = 1F - FISHEYE * (dxn * dxn + 0.35F * dyn * dyn) + caScale;
+        float fe = 1F + caScale * (dxn * dxn + dyn * dyn);
         px = refW * 0.5F + (px - refW * 0.5F) * fe;
         py = REF_H * 0.5F + (py - REF_H * 0.5F) * fe;
-        float u = Mth.clamp(rx / refW, 0F, 1F);
-        float v = 1F - Mth.clamp(ry / REF_H, 0F, 1F);     // frame buffer textures are upside down
+        // the picture is sampled at (uv - fisheye offset)
+        fishOffset(rx, ry, refW, TMP_B);
+        float u = Mth.clamp((rx + 0F) / refW - TMP_B[0] / refW, 0F, 1F);
+        float vv = (1F - ry / REF_H) + TMP_B[1] / REF_H;      // frame buffer textures are upside down
+        float v = Mth.clamp(vv, 0F, 1F);
         b.vertex(m, px, py, 0F).uv(u, v).endVertex();
     }
 
@@ -357,6 +380,9 @@ public class CameraHud {
             // only the vertical sides bow (sideways); the horizontal sides stay straight
             x = cx + (x - cx) * (1F + LENS * (1F - dy * dy));
         }
+        fishOffset(x, y, curRefW, TMP_B);
+        x += TMP_B[0];
+        y += TMP_B[1];
         qb.vertex(qm, x, y, 0F)
                 .color((argb >> 16) & 255, (argb >> 8) & 255, argb & 255, (argb >>> 24) & 255)
                 .endVertex();
@@ -634,11 +660,11 @@ public class CameraHud {
             grainLoc = mc.getTextureManager().register("slendercam_grain", grain);
         }
         long now = System.currentTimeMillis();
-        long interval = fl > 0.05F ? 0 : (gi > 0.2F ? 40 : 120);
+        long interval = fl > 0.05F ? 0 : (GlitchPort.dice() ? 40 : 120);
         if (now - lastNoise > interval) {
             lastNoise = now;
             NativeImage img = grain.getPixels();
-            int chroma = 18 + Math.round(42F * Mth.clamp(gi * 2F, 0F, 1F));    // the colour cast grows with the sanity loss
+            int chroma = 18 + Math.round(42F * Mth.clamp(GlitchPort.intensity() / 50F, 0F, 1F));    // the colour cast grows with the sanity loss
             if (img != null) {
                 for (int y = 0; y < TEX; y++) {
                     for (int x = 0; x < TEX; x++) {
@@ -657,18 +683,13 @@ public class CameraHud {
                 grain.upload();
             }
         }
-        // calm -> action: the base grain smoothly grows from CALM to MAX while the aggression rises
-        float gt = Mth.clamp(gi / 0.4F, 0F, 1F);
-        gt = gt * gt * (3F - 2F * gt);
-        float alpha = (Mth.lerp(gt, GRAIN_ALPHA_CALM, GRAIN_ALPHA_MAX) + 0.30F * gi) * (1F - 0.20F * gt);   // 20% less bright while the sanity is lost
+        // GRAIN OF THE ORIGINAL: grainIntensityMax = Random.Range(cache, 0.015 * I) while the dice is on, the cache value
+        // otherwise (re-rolled 50 times a second in GlitchPort). The cache value gives the calm grain of before (0.084).
+        float alpha = Math.min(0.95F, 0.42F * GlitchPort.grainMax());
         if (fl > 0F) {
             // Teleport uses the same camera grain, simply pushed to an almost opaque burst.
             alpha = 0.90F + 0.07F * RND.nextFloat();
-        } else if (gi > 0.15F) {
-            alpha *= 0.78F + 0.42F * RND.nextFloat();
         }
-        alpha = Math.min(0.97F, alpha);
-        if (fl <= 0F) alpha *= 0.70F;     // the general noise of the camera: 30% more transparent
 
         double g = mc.getWindow().getGuiScale();
         int regionW = Math.max(1, (int) Math.round(w * g / GRAIN_PIXEL_SIZE));
@@ -683,5 +704,35 @@ public class CameraHud {
                 regionW, regionH, TEX, TEX);
         RenderSystem.setShaderColor(1F, 1F, 1F, 1F);
         RenderSystem.disableBlend();
+        drawScratches(ps, w, h);
+    }
+
+    private static float scratchX;
+    private static long scratchUntil;
+    private static int scratchCount = 1;
+
+    /**
+     * Scratches of the original (the second value of the noise script: scratchIntensityMax = Random.Range(cache, 0.005 * I)).
+     * Thin vertical lines that jump to a new place about 10 times a second (scratchFPS) and wobble a little (scratchJitter).
+     * Only the part above the calm value is shown, so there are no scratches in the calm picture.
+     */
+    private static void drawScratches(PoseStack ps, int w, int h) {
+        float excess = GlitchPort.scratchMax() - GlitchPort.SCRATCH_CACHE;
+        if (excess <= 0.003F) return;
+        long now = System.currentTimeMillis();
+        if (now >= scratchUntil) {
+            scratchX = RND.nextFloat();
+            scratchCount = 1 + RND.nextInt(2);
+            scratchUntil = now + (long) (RND.nextFloat() * 200F);
+        }
+        int a = Math.round(255F * Math.min(0.55F, excess * 2.2F));
+        if (a <= 0) return;
+        int lw = Math.max(1, Math.round(w / 900F));
+        for (int i = 0; i < scratchCount; i++) {
+            float x = scratchX + i * 0.37F + (RND.nextFloat() - 0.5F) * 0.02F;
+            x -= (float) Math.floor(x);
+            int px = Math.round(x * (w - lw));
+            GuiComponent.fill(ps, px, 0, px + lw, h, (a << 24) | 0xFFFFFF);
+        }
     }
 }

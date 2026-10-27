@@ -1,3 +1,6 @@
 {
-  "static_light_full": {"sounds": ["slendercamfx:static_light_full"]}
+  "static_light_full": {"sounds": ["slendercamfx:static_light_full"]},
+  "static_medium_full": {"sounds": ["slendercamfx:static_medium_full"]},
+  "static_heavy_full": {"sounds": ["slendercamfx:static_heavy_full"]},
+  "static_glitch_orig": {"sounds": ["slendercamfx:static_glitch_orig"]}
 }
