@@ -692,34 +692,52 @@ public class CameraHud {
         }
 
         double g = mc.getWindow().getGuiScale();
-        int regionW = Math.max(1, (int) Math.round(w * g / GRAIN_PIXEL_SIZE));
-        int regionH = Math.max(1, (int) Math.round(h * g / GRAIN_PIXEL_SIZE));
 
         RenderSystem.enableBlend();
         RenderSystem.defaultBlendFunc();
         RenderSystem.setShader(GameRenderer::getPositionTexShader);
-        RenderSystem.setShaderColor(1F, 1F, 1F, alpha);
         RenderSystem.setShaderTexture(0, grainLoc);
-        GuiComponent.blit(ps, 0, 0, w, h, RND.nextInt(TEX), RND.nextInt(TEX),
-                regionW, regionH, TEX, TEX);
+        // the scratches of the original are GAPS in the grain: horizontal bands over the whole width where the noise is missing
+        int bands = updateScratches(h);
+        float u0 = RND.nextInt(TEX), v0 = RND.nextInt(TEX);
+        int y = 0;
+        for (int i = 0; i < bands; i++) {
+            int a = Math.max(y, BAND_A[i]), b = Math.max(a, BAND_B[i]);
+            grainStrip(ps, w, y, a, u0, v0, g, alpha);
+            grainStrip(ps, w, a, b, u0, v0, g, alpha * (1F - BAND_K[i]));
+            y = b;
+        }
+        grainStrip(ps, w, y, h, u0, v0, g, alpha);
         RenderSystem.setShaderColor(1F, 1F, 1F, 1F);
         RenderSystem.disableBlend();
-        drawScratches(ps, w, h);
+    }
+
+    /** one horizontal strip (gui rows ya..yb) of the grain, with the same texture offset as the other strips. */
+    private static void grainStrip(PoseStack ps, int w, int ya, int yb, float u0, float v0, double g, float alpha) {
+        if (yb <= ya || alpha <= 0.001F) return;
+        RenderSystem.setShaderColor(1F, 1F, 1F, alpha);
+        int regionW = Math.max(1, (int) Math.round(w * g / GRAIN_PIXEL_SIZE));
+        int regionH = Math.max(1, (int) Math.round((yb - ya) * g / GRAIN_PIXEL_SIZE));
+        GuiComponent.blit(ps, 0, ya, w, yb - ya, u0, v0 + (float) (ya * g / GRAIN_PIXEL_SIZE), regionW, regionH, TEX, TEX);
     }
 
     private static final int MAX_SCRATCH = 3;
-    private static final float[] SCR_Y = new float[MAX_SCRATCH], SCR_V = new float[MAX_SCRATCH], SCR_L = new float[MAX_SCRATCH], SCR_S = new float[MAX_SCRATCH];
+    private static final int[] BAND_A = new int[MAX_SCRATCH], BAND_B = new int[MAX_SCRATCH];
+    private static final float[] BAND_K = new float[MAX_SCRATCH];
+    private static final float[] SCR_Y = new float[MAX_SCRATCH], SCR_V = new float[MAX_SCRATCH], SCR_T = new float[MAX_SCRATCH];
     private static int scratchCount;
     private static long scratchUntil, scratchLastMs;
 
     /**
-     * Scratches of the original (scratchIntensityMax = Random.Range(cache, 0.005 * I)): thin HORIZONTAL lines that cross the
-     * picture, jump to a new height about 10 times a second (scratchFPS), drift while they live and flicker. Only the part above
-     * the calm value is shown, so the calm picture has no scratches.
+     * Scratches of the original (scratchIntensityMax = Random.Range(cache, 0.005 * I)): they are not lines that are drawn, but
+     * GAPS in the grain: thin horizontal bands over the WHOLE width of the screen where the noise is missing, so they look like
+     * dark scratches on the film. They jump to a new height about 10 times a second (scratchFPS) and drift while they live.
+     * Only the part above the calm value counts, so the calm picture has none. Fills BAND_A/B (gui rows) and BAND_K (how empty
+     * the gap is, 0..1), sorted from the top; returns how many.
      */
-    private static void drawScratches(PoseStack ps, int w, int h) {
+    private static int updateScratches(int h) {
         float excess = GlitchPort.scratchMax() - GlitchPort.SCRATCH_CACHE;
-        if (excess <= 0.003F) { scratchCount = 0; scratchUntil = 0L; return; }
+        if (excess <= 0.003F) { scratchCount = 0; scratchUntil = 0L; return 0; }
         long now = System.currentTimeMillis();
         float dt = scratchLastMs == 0L ? 0F : Math.min(0.1F, (now - scratchLastMs) / 1000F);
         scratchLastMs = now;
@@ -727,23 +745,23 @@ public class CameraHud {
             scratchCount = 1 + RND.nextInt(MAX_SCRATCH);
             for (int i = 0; i < scratchCount; i++) {
                 SCR_Y[i] = RND.nextFloat();
-                SCR_V[i] = (RND.nextFloat() - 0.5F) * 0.5F;        // drift, share of the height per second
-                SCR_L[i] = 0.55F + 0.45F * RND.nextFloat();         // how much of the width it covers
-                SCR_S[i] = RND.nextFloat();                          // where it starts
+                SCR_V[i] = (RND.nextFloat() - 0.5F) * 0.4F;         // drift, share of the height per second
+                SCR_T[i] = 0.6F + 1.6F * RND.nextFloat();           // thickness: about 1-4 pixels of a 1080p screen
             }
             scratchUntil = now + 40L + (long) (RND.nextFloat() * 200F);
         }
-        int base = Math.round(255F * Math.min(0.6F, excess * 2.4F));
-        int lh = Math.max(1, Math.round(h / 540F));
+        float k = Math.min(0.95F, 0.45F + excess * 3.5F);
+        int n = 0;
         for (int i = 0; i < scratchCount; i++) {
             SCR_Y[i] += SCR_V[i] * dt;
             SCR_Y[i] -= (float) Math.floor(SCR_Y[i]);
-            int a = Math.round(base * (0.55F + 0.45F * RND.nextFloat()));
-            if (a <= 0) continue;
-            int len = Math.round(w * SCR_L[i]);
-            int x0 = Math.round((w - len) * SCR_S[i]);
-            int y = Math.round(SCR_Y[i] * (h - lh));
-            GuiComponent.fill(ps, x0, y, x0 + len, y + lh, (a << 24) | 0xFFFFFF);
+            int th = Math.max(1, Math.round(SCR_T[i] * h / 1080F * 1.5F));
+            int a = Math.round(SCR_Y[i] * (h - th));
+            int p = n;
+            while (p > 0 && BAND_A[p - 1] > a) { BAND_A[p] = BAND_A[p - 1]; BAND_B[p] = BAND_B[p - 1]; BAND_K[p] = BAND_K[p - 1]; p--; }
+            BAND_A[p] = a; BAND_B[p] = a + th; BAND_K[p] = k;
+            n++;
         }
+        return n;
     }
 }
