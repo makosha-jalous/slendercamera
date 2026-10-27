@@ -310,6 +310,10 @@ public class CameraEffects {
     private static int histIdx, jumpCooldown;
 
     private static BreathingLoop breathingLoop;
+
+
+    private static final GlitchLoop[] GLITCH = new GlitchLoop[5];
+    private static final float[] GLITCH_GAIN = new float[5];
     /** which of the two strongest layers (3 or 4) is the main one, when it flips next, and the tail after the big static. */
     private static int topChoice = 3, topSwitchTicks, topTailTicks;
     private static boolean topWasOn;
@@ -565,6 +569,7 @@ public class CameraEffects {
         GlitchPort.setInputs(cam ? sanity * 100F : 0F, seen, deathPhase >= 1);
         GlitchPort.tickSounds(mc);
         manageBreathing(mc);
+        manageGlitchLayers(mc, near);      // the OLD staticglitch 1..4 (slendercam folder), as before
     }
 
     private static void syncMirrors() {
@@ -741,6 +746,20 @@ public class CameraEffects {
         return t * t * (3F - 2F * t);
     }
 
+    private static class GlitchLoop extends AbstractTickableSoundInstance {
+        private final int layer;
+        GlitchLoop(SoundEvent ev, int layer) {
+            super(ev, SoundSource.MASTER, RandomSource.create());
+            this.layer = layer; this.looping = true; this.delay = 0; this.volume = 0.001F;
+            this.relative = true; this.attenuation = SoundInstance.Attenuation.NONE;
+        }
+        @Override public boolean canStartSilent() { return true; }
+        @Override public void tick() {
+            this.volume = GLITCH_GAIN[layer] * MASTER_VOLUME;
+            if (GLITCH_GAIN[layer] < 0.002F && lastMode != layer) this.stop();
+        }
+    }
+
     /** Breathing: see the BREATHING constants; its volume follows breathEnv (about 5 s up, about 5 s down). */
     private static class BreathingLoop extends AbstractTickableSoundInstance {
         BreathingLoop(SoundEvent ev) {
@@ -784,6 +803,103 @@ public class CameraEffects {
         if (STARTED.size() > 64) STARTED.clear();
         STARTED.put(inst, System.currentTimeMillis());
         sm.play(inst);
+    }
+
+    private static SoundEvent glitchEvent(int layer) {
+        return switch (layer) {
+            case 1 -> SlenderCamMod.STATIC_GLITCH_1.get();
+            case 2 -> SlenderCamMod.STATIC_GLITCH_2.get();
+            case 4 -> SlenderCamMod.STATIC_GLITCH_4.get();
+            default -> SlenderCamMod.STATIC_GLITCH_3.get();
+        };
+    }
+
+    /**
+     * The staticglitch loops on top of the big static. Only ONE of them is the "main" layer at a time; when
+     * another one takes over, the old one is cut off in a quarter of a second.
+     *  layer 1 - weakest: starts early and grows together with the big static;
+     *  layer 2 - takes over 4-6 s after the big static started, full strength at once; it is also the
+     *            background when he is not close any more (sometimes layer 1 replaces it for a moment);
+     *  layers 3 and 4 - the strongest pair: they NEVER play together. From a sanity loss of 45-50% on (and for 3-5 s
+     *            after the big static is gone) one of them plays; every 4-9 s the other one interrupts it, so they take turns.
+     * When he is not close any more and the tail is over, layers 3 / 4 are cut at once.
+     */
+    private static void manageGlitchLayers(Minecraft mc, boolean near) {
+        SoundManager sm = mc.getSoundManager();
+        float h = heavyVol;
+
+        if (h > 0.03F) {
+            if (heavyTicks == 0) g2StartTicks = 80 + HUD_RNG.nextInt(41);   // 4-6 s
+            heavyTicks++;
+        } else {
+            heavyTicks = 0;
+        }
+
+        // the strongest pair: zone = high sanity loss, plus a 3-5 s tail after the big static
+        // layers 3 and 4 start when the sanity loss reaches 45..50% (a new random threshold every time) and stay
+        // until it falls below 40% (plus the tail)
+        if (!topWasOn && topThreshold <= 0F) topThreshold = 0.55F + 0.05F * HUD_RNG.nextFloat();
+        boolean zone = sanity >= (topWasOn ? 0.50F : topThreshold);
+        if (zone) {
+            topTailTicks = 60 + HUD_RNG.nextInt(41);          // 3-5 s after the zone ends
+        } else if (topTailTicks > 0 && h < 0.03F) {
+            topTailTicks--;
+        } else if (h >= 0.03F) {
+            topTailTicks = Math.max(topTailTicks, 1);          // the big static is still audible: keep waiting
+        }
+        boolean topOn = zone || (topWasOn && topTailTicks > 0);
+        if (topOn && !topWasOn) {
+            topChoice = HUD_RNG.nextBoolean() ? 3 : 4;
+            topSwitchTicks = 80 + HUD_RNG.nextInt(101);        // 4-9 s
+        } else if (topOn && --topSwitchTicks <= 0) {
+            topChoice = topChoice == 3 ? 4 : 3;                // the other one interrupts
+            topSwitchTicks = 80 + HUD_RNG.nextInt(101);
+        }
+        if (!topOn) topThreshold = 0F;
+        topWasOn = topOn;
+
+        // layers 1 and 2 reach silence about 2 s (h = 0.068) before the big static is gone
+        float early = smooth(0.068F, 0.20F, h);
+
+        int want = 0;
+        if (topOn) {
+            want = topChoice;
+        } else if (early > 0F) {
+            if (heavyTicks >= g2StartTicks || lastMode >= 2) want = 2;
+            else if (h > 0.10F) want = 1;
+
+            if (!near && want == 2) {
+                if (altTicks > 0) { altTicks--; want = 1; }
+                else if (h > 0.15F && HUD_RNG.nextFloat() < 0.012F) altTicks = 40 + HUD_RNG.nextInt(40);
+            } else {
+                altTicks = 0;
+            }
+        }
+        lastMode = want;
+
+        float top = Math.max(h, sanity * 0.7F);
+        float[] level = new float[5];
+        level[1] = 0.80F * (0.30F + 0.70F * h) * early;
+        level[2] = 0.85F * (0.50F + 0.50F * h) * early;
+        level[3] = 1.00F * (0.60F + 0.40F * top);
+        level[4] = level[3];
+
+        for (int i = 1; i <= 4; i++) {
+            float goal = want == i ? level[i] : 0F;
+            float g = GLITCH_GAIN[i];
+            if (goal > g) {
+                float up = i == 1 ? 0.04F : 0.35F;       // layer 1 grows, the others play at once
+                g = Math.min(goal, g + up);
+            } else {
+                g = Math.max(goal, g - 0.20F);           // cut off in about a quarter of a second
+            }
+            GLITCH_GAIN[i] = g;
+
+            if (g > 0.01F && needsStart(sm, GLITCH[i])) {
+                GLITCH[i] = new GlitchLoop(glitchEvent(i), i);
+                startLoop(sm, GLITCH[i]);
+            }
+        }
     }
 
     /** smooth continuous noise -1..1 (three sines of different speeds): no jumps between frames. */
