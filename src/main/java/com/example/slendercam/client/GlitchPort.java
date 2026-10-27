@@ -202,7 +202,7 @@ final class GlitchPort {
     private static final float MEDIUM_VOLUME = 1.0F;
     private static final float HEAVY_VOLUME = 1.0F;
     /** loudness of the plain staticglitch layer on top of everything (the original: 0.5 at any loss above 0). 1.0 = as in the original, 0 = off. */
-    private static final float GLITCH_SCALE = 1.0F;
+    private static final float GLITCH_SCALE = 0.2F;
 
     private static GateLoop light, medium, heavy;
     private static SoundInstance glitchInst;
