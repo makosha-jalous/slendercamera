@@ -1,6 +1,20 @@
 package com.example.slendercam.client;
 
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.resources.sounds.Sound;
+import net.minecraft.client.sounds.AudioStream;
+import net.minecraft.client.sounds.SoundBufferLibrary;
+import org.lwjgl.BufferUtils;
+
+import javax.sound.sampled.AudioFormat;
+import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
+import java.nio.ShortBuffer;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import net.minecraft.client.resources.sounds.AbstractTickableSoundInstance;
 import net.minecraft.client.resources.sounds.SimpleSoundInstance;
 import net.minecraft.client.resources.sounds.SoundInstance;
@@ -54,7 +68,7 @@ final class GlitchPort {
     private static boolean inSeen, inLost;
 
     // ---- state of the original ----
-    private static float glitchIntensity;
+    private static volatile float glitchIntensity;
     private static boolean diceOn;            // result of the last step: Apply (true) / Revert (false)
     private static boolean revertSinceTick;   // a Revert happened after the last game tick
     private static float chroma = VIGNETTE_CACHE;
@@ -82,6 +96,7 @@ final class GlitchPort {
 
     static void setInputs(float lossPercent, boolean seen, boolean lost) {
         inLoss = Mth.clamp(lossPercent, 0F, 100F);
+        sharedI = inLoss;
         inSeen = seen;
         inLost = lost;
     }
@@ -202,19 +217,134 @@ final class GlitchPort {
     private static final float MEDIUM_VOLUME = 1.0F;
     private static final float HEAVY_VOLUME = 1.0F;
     /** loudness of the plain staticglitch layer on top of everything (the original: 0.5 at any loss above 0). 1.0 = as in the original, 0 = off. */
-    private static final float GLITCH_SCALE = 0.5F;
+    private static final float GLITCH_SCALE = 1.0F;
 
-    private static GateLoop light, medium, heavy;
-    private static SoundInstance glitchInst;
-    private static long glitchStartMs;
+    // ------------------------------------------------------------------------------------------
+    //  20 ms GATING INSIDE THE SOUND ITSELF
+    //  Minecraft changes the volume of a sound only once per game tick (50 ms). So the four layers are played as STREAMS that
+    //  are produced by this class: the samples of the track are copied one by one and in every 20 ms block (0.02 s = the
+    //  FixedUpdate step of the original) the dice decides if the block is heard or silent. For staticglitch an "off" block
+    //  also rewinds the sound to its beginning (Revert stops it, Apply plays it again from the start).
+    //  All layers use the SAME dice for the same 20 ms block (audioDice), like the one dice of the original.
+    // ------------------------------------------------------------------------------------------
+
+    private static volatile float sharedI;
+    private static final long AUDIO_EPOCH = System.nanoTime();
+    private static final int RING = 4096;
+    private static final long[] ringStep = new long[RING];
+    private static final boolean[] ringVal = new boolean[RING];
+    private static final java.util.Random AUDIO_RNG = new java.util.Random();
+
+    /** the dice of the 20 ms block number "step" (the same answer for every layer that asks for the same block). */
+    static synchronized boolean audioDice(long step) {
+        int i = (int) (step & (RING - 1));
+        if (ringStep[i] != step + 1) {
+            float I = sharedI;
+            ringVal[i] = I > 0F && AUDIO_RNG.nextFloat() < (I + 35F) / 100F;
+            ringStep[i] = step + 1;
+        }
+        return ringVal[i];
+    }
+
+    private static long audioStepNow() {
+        return (System.nanoTime() - AUDIO_EPOCH) / 20_000_000L;
+    }
+
+    /** san2 (static medium): (I - 30) / 70 up to 60 %; above 60 % the original keeps the last value, (60 - 30) / 70. */
+    private static float mediumGain(float I) {
+        if (I > 60F) return 30F / 70F;
+        if (I > 30F) return (I - 30F) / 70F;
+        return 0F;
+    }
+
+    /** san3 (static heavy): (I - 60) / 40 above 60 %. */
+    private static float heavyGain(float I) {
+        return I > 60F ? Mth.clamp((I - 60F) / 40F, 0F, 1F) : 0F;
+    }
+
+    /** layer kinds: 1 static light, 2 static medium, 3 static heavy, 4 plain staticglitch. */
+    private static final class GateStream implements AudioStream {
+        private final AudioFormat format;
+        private final short[] pcm;
+        private final ByteOrder order;
+        private final int kind;
+        private final int stepSamples;
+        private long step;
+        private int stepLeft;
+        private boolean on;
+        private int pos;
+        private float gain;
+
+        GateStream(AudioStream src, int kind) throws IOException {
+            this.kind = kind;
+            this.format = src.getFormat();
+            this.stepSamples = Math.max(1, Math.round(format.getSampleRate() * STEP));
+            List<short[]> chunks = new ArrayList<>();
+            ByteOrder ord = ByteOrder.nativeOrder();
+            boolean first = true;
+            int total = 0;
+            while (true) {
+                ByteBuffer b = src.read(32768);
+                if (b == null || !b.hasRemaining()) break;
+                if (first) { ord = b.order(); first = false; }
+                ShortBuffer sb = b.asShortBuffer();
+                short[] a = new short[sb.remaining()];
+                sb.get(a);
+                chunks.add(a);
+                total += a.length;
+            }
+            src.close();
+            short[] all = new short[Math.max(1, total)];
+            int p = 0;
+            for (short[] a : chunks) { System.arraycopy(a, 0, all, p, a.length); p += a.length; }
+            this.pcm = all;
+            this.order = ord;
+            this.step = audioStepNow();
+        }
+
+        @Override public AudioFormat getFormat() { return format; }
+
+        @Override public ByteBuffer read(int size) {
+            int n = Math.max(1, size / 2);
+            ByteBuffer out = BufferUtils.createByteBuffer(n * 2).order(order);
+            for (int i = 0; i < n; i++) {
+                if (stepLeft <= 0) {
+                    on = audioDice(step++);
+                    stepLeft = stepSamples;
+                    float I = sharedI;
+                    gain = kind == 2 ? mediumGain(I) : kind == 3 ? heavyGain(I) : kind == 4 ? 0.5F : 1F;
+                    if (kind == 4 && !on) pos = 0;          // Revert stops staticglitch, the next Apply plays it from the beginning
+                }
+                stepLeft--;
+                short v = 0;
+                if (on) v = (short) Math.round(pcm[pos] * gain);
+                out.putShort(v);
+                if (kind != 4 || on) {
+                    pos++;
+                    if (pos >= pcm.length) pos = 0;
+                }
+            }
+            out.flip();
+            return out;
+        }
+
+        @Override public void close() { }
+    }
+
+    private static GateLoop light, medium, heavy, glitch;
 
     private static SoundEvent event(String name) {
         return new SoundEvent(new ResourceLocation(NS, name));
     }
 
-    /** a looping whole track whose volume follows the dice. Loops are muted, not paused, like the audio sources of the original. */
+    /**
+     * A looping layer. When the sound engine asks for its stream (getStream) it gets the GateStream, which gates the sound
+     * every 20 ms. If for some reason that does not happen (streamed stays false), the layer falls back to the old way: the
+     * volume is switched once per game tick.
+     */
     private static final class GateLoop extends AbstractTickableSoundInstance {
-        private final int kind;      // 1 light, 2 medium, 3 heavy
+        private final int kind;
+        volatile boolean streamed;
 
         GateLoop(int kind, String file) {
             super(event(file), SoundSource.MASTER, RandomSource.create());
@@ -225,18 +355,36 @@ final class GlitchPort {
 
         @Override public boolean canStartSilent() { return true; }
 
+        public CompletableFuture<AudioStream> getStream(SoundBufferLibrary lib, Sound sound, boolean loop) {
+            return lib.getStream(sound.getPath(), false).thenApply(src -> {
+                try {
+                    GateStream gs = new GateStream(src, kind);
+                    streamed = true;
+                    return (AudioStream) gs;
+                } catch (IOException e) {
+                    throw new CompletionException(e);
+                }
+            });
+        }
+
         @Override public void tick() {
             float v;
             if (kind == 1) {
                 if (glitchIntensity <= 0F) { this.stop(); return; }
                 float level = Math.max(CameraEffects.sanity(), 0.05F);
-                v = diceOn ? LIGHT_VOLUME * (0.55F + 0.45F * level) : 0F;
+                v = LIGHT_VOLUME * (0.55F + 0.45F * level);
+                if (!streamed && !diceOn) v = 0F;
             } else if (kind == 2) {
                 if (glitchIntensity <= 30F) { this.stop(); return; }
-                v = vol2 * MEDIUM_VOLUME;
-            } else {
+                v = MEDIUM_VOLUME;
+                if (!streamed) v *= vol2;
+            } else if (kind == 3) {
                 if (glitchIntensity <= 60F) { this.stop(); return; }
-                v = vol3 * HEAVY_VOLUME;
+                v = HEAVY_VOLUME;
+                if (!streamed) v *= vol3;
+            } else {
+                if (glitchIntensity <= 0F) { this.stop(); return; }
+                v = GLITCH_SCALE * (streamed ? 1F : (diceOn ? 0.5F : 0F));
             }
             this.volume = Math.max(0.0001F, v * CameraEffects.MASTER_VOLUME);
         }
@@ -244,38 +392,23 @@ final class GlitchPort {
 
     static void tickSounds(Minecraft mc) {
         SoundManager sm = mc.getSoundManager();
-
-        if (glitchIntensity > 0F) {
-            if (CameraEffects.needsStart(sm, light)) {
-                light = new GateLoop(1, "static_light_full");
-                CameraEffects.startLoop(sm, light);
-            }
-            if (glitchIntensity > 30F && CameraEffects.needsStart(sm, medium)) {
-                medium = new GateLoop(2, "static_medium_full");
-                CameraEffects.startLoop(sm, medium);
-            }
-            if (glitchIntensity > 60F && CameraEffects.needsStart(sm, heavy)) {
-                heavy = new GateLoop(3, "static_heavy_full");
-                CameraEffects.startLoop(sm, heavy);
-            }
+        revertSinceTick = false;
+        if (glitchIntensity <= 0F) return;
+        if (CameraEffects.needsStart(sm, light)) {
+            light = new GateLoop(1, "static_light_full");
+            CameraEffects.startLoop(sm, light);
         }
-
-        // staticglitch: Mixer with staticglitch <= 0 (every Revert) stops it; Apply starts it again when it is not playing
-        if (revertSinceTick) {
-            revertSinceTick = false;
-            if (glitchInst != null) {
-                sm.stop(glitchInst);
-                glitchInst = null;
-            }
+        if (glitchIntensity > 30F && CameraEffects.needsStart(sm, medium)) {
+            medium = new GateLoop(2, "static_medium_full");
+            CameraEffects.startLoop(sm, medium);
         }
-        if (diceOn && volG > 0F && GLITCH_SCALE > 0F && glitchIntensity > 0F) {
-            long now = System.currentTimeMillis();
-            boolean playing = glitchInst != null && (now - glitchStartMs < 400L || sm.isActive(glitchInst));
-            if (!playing) {
-                glitchInst = SimpleSoundInstance.forUI(event("static_glitch_orig"), 1.0F, Math.max(0.0001F, volG * GLITCH_SCALE * CameraEffects.MASTER_VOLUME));
-                glitchStartMs = now;
-                sm.play(glitchInst);
-            }
+        if (glitchIntensity > 60F && CameraEffects.needsStart(sm, heavy)) {
+            heavy = new GateLoop(3, "static_heavy_full");
+            CameraEffects.startLoop(sm, heavy);
+        }
+        if (GLITCH_SCALE > 0F && CameraEffects.needsStart(sm, glitch)) {
+            glitch = new GateLoop(4, "static_glitch_orig");
+            CameraEffects.startLoop(sm, glitch);
         }
     }
 }
