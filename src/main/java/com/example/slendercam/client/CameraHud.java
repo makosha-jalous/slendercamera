@@ -198,7 +198,7 @@ public class CameraHud {
     /** the largest colour split (share of the half width at the edge of the picture, red and blue go opposite ways). */
     private static final float CA_MAX = 0.10F;
     /** a very light fish-eye of the frame, the cross and the other white elements only (the sides bow outwards). */
-    private static final float LENS = 0.03F;
+    private static final float LENS = 0.01F;
     private static final int SCENE_COLS = 48, SCENE_ROWS = 28;
     private static RenderTarget sceneCopy;
     private static float caScale;
