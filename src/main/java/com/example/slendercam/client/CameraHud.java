@@ -195,8 +195,8 @@ public class CameraHud {
      */
     private static final float FISHEYE_GAIN = 1.0F;
     private static final float FISH_K = 80F / 512F;
-    /** the largest colour split (share of the half width at the edge of the picture, red and blue go opposite ways). */
-    private static final float CA_MAX = 0.10F;
+    /** the largest colour split (share of the half width at the edge of the picture; only the green channel moves, red and blue stay together = pink / magenta). */
+    private static final float CA_MAX = 0.16F;
     /** a very light fish-eye of the frame, the cross and the other white elements only (the sides bow outwards). */
     private static final float LENS = 0.01F;
     private static final int SCENE_COLS = 48, SCENE_ROWS = 28;
@@ -258,7 +258,7 @@ public class CameraHud {
             for (int pass = 0; pass < passes; pass++) {
                 if (split) {
                     RenderSystem.colorMask(pass == 0, pass == 1, pass == 2, false);
-                    caScale = (pass == 0 ? 1F : pass == 2 ? -1F : 0F) * ca * CA_MAX;
+                    caScale = (pass == 1 ? 1F : 0F) * ca * CA_MAX;     // only GREEN is shifted (like the original): the fringes are magenta and green
                 } else {
                     RenderSystem.colorMask(true, true, true, false);
                     caScale = 0F;
@@ -292,7 +292,7 @@ public class CameraHud {
         float px = rx + (TMP_C[0] - rx) * SCENE_BEND;
         float py = ry + (TMP_C[1] - ry) * SCENE_BEND;
         // chromatic aberration of the original: the shift grows with the CUBE of the distance from the middle
-        // (Unity: uv - texel * chromaticAberration * coords * dot(coords, coords)); here red and blue go opposite ways
+        // (Unity: uv - texel * chromaticAberration * coords * dot(coords, coords)); here only the green channel is moved (red + blue together look pink)
         float dxn = (px - refW * 0.5F) / (refW * 0.5F), dyn = (py - REF_H * 0.5F) / (REF_H * 0.5F);
         float fe = 1F + caScale * (dxn * dxn + dyn * dyn);
         px = refW * 0.5F + (px - refW * 0.5F) * fe;
@@ -707,32 +707,43 @@ public class CameraHud {
         drawScratches(ps, w, h);
     }
 
-    private static float scratchX;
-    private static long scratchUntil;
-    private static int scratchCount = 1;
+    private static final int MAX_SCRATCH = 3;
+    private static final float[] SCR_Y = new float[MAX_SCRATCH], SCR_V = new float[MAX_SCRATCH], SCR_L = new float[MAX_SCRATCH], SCR_S = new float[MAX_SCRATCH];
+    private static int scratchCount;
+    private static long scratchUntil, scratchLastMs;
 
     /**
-     * Scratches of the original (the second value of the noise script: scratchIntensityMax = Random.Range(cache, 0.005 * I)).
-     * Thin vertical lines that jump to a new place about 10 times a second (scratchFPS) and wobble a little (scratchJitter).
-     * Only the part above the calm value is shown, so there are no scratches in the calm picture.
+     * Scratches of the original (scratchIntensityMax = Random.Range(cache, 0.005 * I)): thin HORIZONTAL lines that cross the
+     * picture, jump to a new height about 10 times a second (scratchFPS), drift while they live and flicker. Only the part above
+     * the calm value is shown, so the calm picture has no scratches.
      */
     private static void drawScratches(PoseStack ps, int w, int h) {
         float excess = GlitchPort.scratchMax() - GlitchPort.SCRATCH_CACHE;
-        if (excess <= 0.003F) return;
+        if (excess <= 0.003F) { scratchCount = 0; scratchUntil = 0L; return; }
         long now = System.currentTimeMillis();
+        float dt = scratchLastMs == 0L ? 0F : Math.min(0.1F, (now - scratchLastMs) / 1000F);
+        scratchLastMs = now;
         if (now >= scratchUntil) {
-            scratchX = RND.nextFloat();
-            scratchCount = 1 + RND.nextInt(2);
-            scratchUntil = now + (long) (RND.nextFloat() * 200F);
+            scratchCount = 1 + RND.nextInt(MAX_SCRATCH);
+            for (int i = 0; i < scratchCount; i++) {
+                SCR_Y[i] = RND.nextFloat();
+                SCR_V[i] = (RND.nextFloat() - 0.5F) * 0.5F;        // drift, share of the height per second
+                SCR_L[i] = 0.55F + 0.45F * RND.nextFloat();         // how much of the width it covers
+                SCR_S[i] = RND.nextFloat();                          // where it starts
+            }
+            scratchUntil = now + 40L + (long) (RND.nextFloat() * 200F);
         }
-        int a = Math.round(255F * Math.min(0.55F, excess * 2.2F));
-        if (a <= 0) return;
-        int lw = Math.max(1, Math.round(w / 900F));
+        int base = Math.round(255F * Math.min(0.6F, excess * 2.4F));
+        int lh = Math.max(1, Math.round(h / 540F));
         for (int i = 0; i < scratchCount; i++) {
-            float x = scratchX + i * 0.37F + (RND.nextFloat() - 0.5F) * 0.02F;
-            x -= (float) Math.floor(x);
-            int px = Math.round(x * (w - lw));
-            GuiComponent.fill(ps, px, 0, px + lw, h, (a << 24) | 0xFFFFFF);
+            SCR_Y[i] += SCR_V[i] * dt;
+            SCR_Y[i] -= (float) Math.floor(SCR_Y[i]);
+            int a = Math.round(base * (0.55F + 0.45F * RND.nextFloat()));
+            if (a <= 0) continue;
+            int len = Math.round(w * SCR_L[i]);
+            int x0 = Math.round((w - len) * SCR_S[i]);
+            int y = Math.round(SCR_Y[i] * (h - lh));
+            GuiComponent.fill(ps, x0, y, x0 + len, y + lh, (a << 24) | 0xFFFFFF);
         }
     }
 }
