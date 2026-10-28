@@ -245,6 +245,7 @@ public class CameraEffects {
     private static float hudPressure;
     private static float fovPressure;
     private static float heavyVol;
+    private static int g2TailTicks;
     private static float proxVol;
     private static float sanity;
     private static boolean seenNow;
@@ -838,8 +839,8 @@ public class CameraEffects {
         // the strongest pair: zone = high sanity loss, plus a 3-5 s tail after the big static
         // layers 3 and 4 start when the sanity loss reaches 45..50% (a new random threshold every time) and stay
         // until it falls below 40% (plus the tail)
-        if (!topWasOn && topThreshold <= 0F) topThreshold = 0.55F + 0.05F * HUD_RNG.nextFloat();
-        boolean zone = sanity >= (topWasOn ? 0.50F : topThreshold);
+        if (!topWasOn && topThreshold <= 0F) topThreshold = 0.75F;
+        boolean zone = sanity >= (topWasOn ? 0.70F : topThreshold);   // 3 and 4: from 75% loss, drop out below 70%
         if (zone) {
             topTailTicks = 60 + HUD_RNG.nextInt(41);          // 3-5 s after the zone ends
         } else if (topTailTicks > 0 && h < 0.03F) {
@@ -865,7 +866,7 @@ public class CameraEffects {
         if (topOn) {
             want = topChoice;
         } else if (early > 0F) {
-            if (heavyTicks >= g2StartTicks || lastMode >= 2) want = 2;
+            if (sanity >= 0.70F && (heavyTicks >= g2StartTicks || lastMode >= 2)) want = 2;   // 2: only from 70% loss
             else if (h > 0.10F) want = 1;
 
             if (!near && want == 2) {
@@ -874,6 +875,13 @@ public class CameraEffects {
             } else {
                 altTicks = 0;
             }
+        }
+        // layer 2 leaves a short tail (50-90 ms: one or two ticks), like the big pair does after its zone
+        if (want == 2) {
+            g2TailTicks = 1 + (HUD_RNG.nextFloat() < 0.4F ? 1 : 0);
+        } else if (lastMode == 2 && !topOn && g2TailTicks > 0) {
+            g2TailTicks--;
+            want = 2;
         }
         lastMode = want;
 
@@ -950,6 +958,8 @@ public class CameraEffects {
      * bursts, the chance and the strength grow with the lost sanity.
      */
     public static float chromatic() {
+        // the short static jumpscares (watcher blip, teleport glitch): strong aberration exactly while they last
+        if (System.currentTimeMillis() < blipEndMs || tpActive()) return 1F;
         return Mth.clamp(GlitchPort.chromaNorm() + flash * 0.8F, 0F, 1F);
     }
 
