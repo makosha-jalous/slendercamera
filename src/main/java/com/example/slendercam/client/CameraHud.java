@@ -494,9 +494,9 @@ public class CameraHud {
     // ------------------------------------------------------------------------------------------
 
     // Pixel-art look of Slender: The Arrival: every element is a grid of square "pixels" with thin seams.
-    private static final float BATT_CELL = 2.3F;        // the original battery is 23 x 11 cells (+2 cells of the nub)
-    private static final float BAR_CELL = 2.6F;         // the original bar is 55 x 5 cells
-    private static final float REC_CELL = 2.55F;        // the original: letters R E C, 5 cells wide, step 6 cells
+    private static final float BATT_CELL = 2.55F;
+    private static final float BAR_CELL = 2.05F;
+    private static final float REC_CELL = 2.45F;
     private static final float DOT_CELL = 2.5F;
     private static final float TIME_CELL = 1.85F;
 
@@ -511,12 +511,12 @@ public class CameraHud {
             {".X.", "X.X", "X.X", "X.X", ".X."},   // 0
             {".X.", "XX.", ".X.", ".X.", "XXX"},   // 1
             {"XXX", "..X", ".X.", "X..", "XXX"},   // 2
-            {".X.", "X.X", ".X.", "X.X", ".X."},   // 3 (copied from the original photo)
+            {"XX.", "..X", ".X.", "..X", "XX."},   // 3
             {"X.X", "X.X", "XXX", "..X", "..X"},   // 4
             {"XXX", "X..", ".X.", "..X", "XX."},   // 5
             {".XX", "X..", "XX.", "X.X", ".X."},   // 6
             {"XXX", "..X", ".X.", ".X.", ".X."},   // 7
-            {"XXX", "X.X", "XXX", "X.X", "XXX"},   // 8 (not seen in the photos: drawn so that it differs from 3)
+            {".X.", "X.X", ".X.", "X.X", ".X."},   // 8
             {".X.", "X.X", ".XX", "..X", "XX."}    // 9
     };
 
@@ -535,10 +535,10 @@ public class CameraHud {
         }
     }
 
-    /** Battery (cells of the original picture): outline 23 x 11 cells, nub of 2 x 5 cells, 21 x 9 checkerboard inside. */
+    /** Battery is always full: 1-cell outline, checkerboard of cells inside, small nub on the right. */
     private static void drawBattery() {
-        float x = 33F, y = 33.3F, cs = BATT_CELL;
-        int bodyW = 23, bodyH = 11;
+        float x = 33F, y = 34.5F, cs = BATT_CELL;
+        int bodyW = 22, bodyH = 9;
         for (int c = 0; c < bodyW; c++) {
             cell(x, y, cs, c, 0, 1, 1, GRAY_EDGE, 0.05F);
             cell(x, y, cs, c, bodyH - 1, 1, 1, GRAY_EDGE, 0.05F);
@@ -547,10 +547,7 @@ public class CameraHud {
             cell(x, y, cs, 0, r, 1, 1, GRAY_EDGE, 0.05F);
             cell(x, y, cs, bodyW - 1, r, 1, 1, GRAY_EDGE, 0.05F);
         }
-        for (int r = 3; r <= 7; r++) {
-            cell(x, y, cs, bodyW, r, 1, 1, GRAY_EDGE, 0.05F);
-            cell(x, y, cs, bodyW + 1, r, 1, 1, GRAY_EDGE, 0.05F);
-        }
+        cell(x, y, cs, bodyW, 2.5F, 1.5F, 4F, GRAY_EDGE, 0.05F);
         for (int i = 0; i < bodyW - 2; i++) {
             for (int j = 0; j < bodyH - 2; j++) {
                 if (((i + j) & 1) != 0) continue;
@@ -562,8 +559,8 @@ public class CameraHud {
     /** Long bar at the top center, a pixel-art frame; the small hollow marker slides along it as the zoom grows. */
     private static void drawTopBar(int refW, float zoom) {
         float cs = BAR_CELL;
-        int cols = 55;
-        float x = refW * 0.5F - cols * cs * 0.5F, y = 31.6F;
+        int cols = 72;
+        float x = refW * 0.5F - cols * cs * 0.5F, y = 33F;
         for (int c = 1; c < cols - 1; c++) {
             cell(x, y, cs, c, 0, 1, 1, GRAY_EDGE, 0.05F);
             cell(x, y, cs, c, 4, 1, 1, GRAY_EDGE, 0.05F);
@@ -584,7 +581,7 @@ public class CameraHud {
     /** Dark red pixel-art dot (always on) and the pixel letters REC (blinking, as before). */
     private static void drawRec(int refW, boolean blinkOn) {
         float right = refW - 34F;
-        float cs = REC_CELL, pitch = 6F;
+        float cs = REC_CELL, pitch = 6.45F;
         float textW = (2F * pitch + 5F) * cs;
         float tx = right - textW, ty = 36F;
 
