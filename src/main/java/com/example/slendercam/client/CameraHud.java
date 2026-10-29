@@ -55,11 +55,12 @@ public class CameraHud {
     private static final int BLINK_MS = 500;             // REC text blink interval
     private static final float CELL = 3F;                // bending mesh cell size in reference pixels
 
-    private static final int GRAY_EDGE = 0x6EFFFFFF;   // outlines of battery and zoom bar
-    private static final int GRAY_LIT = 0x7AFFFFFF;    // lit pixels, timer digits
-    private static final int FRAME = 0x5CFFFFFF;
+    private static final int GRAY_EDGE = 0xB0FFFFFF;   // outlines of battery and zoom bar (original: white, about 69% opaque)
+    private static final int GRAY_LIT = 0xB8FFFFFF;    // lit pixels of the zoom marker, timer digits (original: about 72%)
+    private static final int BATT_LIT = 0xB8E7E5E7;    // the checkerboard of the battery (the original picture is light grey 231,229,231)
+    private static final int FRAME = 0x3AFFFFFF;        // the frame of the original is thin and faint (about 22%)
     private static final int FRAME_CLEAR = 0x00FFFFFF;
-    private static final int RED = 0xFFB00000;         // dark red like in the game
+    private static final int RED = 0x96FF0000;         // REC and the dot: red 255 at about 59% (looks like 150,0,6 on a dark picture)
 
     private static final int REF_H = 415;
     private static final int TEX = 512;
@@ -79,6 +80,8 @@ public class CameraHud {
     private static final float[] TMP_C = new float[2];
 
     // ---- one batch of coloured quads
+    private static float curDpr = 1F;                       // screen pixels per reference pixel
+    private static boolean snapVtx;                         // true while the pixel-art elements are drawn: every corner lands on a whole screen pixel
     private static BufferBuilder qb;
     private static Matrix4f qm;
 
@@ -169,13 +172,17 @@ public class CameraHud {
 
         // Everything (frame, battery, zoom bar, REC, timer, cross) is made of small squares / lines,
         // so it all goes into one batch and every square follows the bending of the frame.
+        curDpr = dpr;
         beginQuads(ps);
+        snapVtx = false;
         drawFrameLine(dpr);
+        snapVtx = true;                       // the pixel-art elements: crisp, even cells on whole screen pixels
         drawBattery();
         drawTopBar(refW, zoom);
         drawRec(refW, blinkOn);
         drawTimer(refW);
         drawCross(refW);
+        snapVtx = false;
         endQuads();
 
         ps.popPose();
@@ -199,6 +206,8 @@ public class CameraHud {
     private static final float CA_MAX = 0.16F;
     /** a very light fish-eye of the frame, the cross and the other white elements only (the sides bow outwards). */
     private static final float LENS = 0.01F;
+    /** the same lens for the HORIZONTAL lines of the frame (and everything else): 0 = straight (as before), > 0 = the top and bottom bow outwards, < 0 = inwards. */
+    private static final float LENS_H = 0F;
     private static final int SCENE_COLS = 48, SCENE_ROWS = 28;
     private static RenderTarget sceneCopy;
     private static float caScale;
@@ -373,16 +382,21 @@ public class CameraHud {
     }
 
     private static void vtx(float x, float y, int argb) {
-        if (LENS > 0F) {
+        if (LENS > 0F || LENS_H != 0F) {
             float cx = (restL + restR) * 0.5F, cy = (restT + restB) * 0.5F;
             float hx = Math.max(1F, (restR - restL) * 0.5F), hy = Math.max(1F, (restB - restT) * 0.5F);
             float dx = (x - cx) / hx, dy = (y - cy) / hy;
-            // only the vertical sides bow (sideways); the horizontal sides stay straight
+            // the vertical sides bow sideways (LENS); the horizontal sides bow up / down (LENS_H, 0 = they stay straight)
             x = cx + (x - cx) * (1F + LENS * (1F - dy * dy));
+            y = cy + (y - cy) * (1F + LENS_H * (1F - dx * dx));
         }
         fishOffset(x, y, curRefW, TMP_B);
         x += TMP_B[0];
         y += TMP_B[1];
+        if (snapVtx) {
+            x = Math.round(x * curDpr) / curDpr;
+            y = Math.round(y * curDpr) / curDpr;
+        }
         qb.vertex(qm, x, y, 0F)
                 .color((argb >> 16) & 255, (argb >> 8) & 255, argb & 255, (argb >>> 24) & 255)
                 .endVertex();
@@ -472,8 +486,8 @@ public class CameraHud {
             OY[i] = my * miter;
         }
 
-        float hw = Math.max(0.3F, 0.42F / dpr);     // half thickness of the solid core
-        float feather = Math.max(0.25F, 0.6F / dpr); // soft edge, about one screen pixel
+        float hw = Math.max(0.3F, 0.75F / dpr);     // half thickness of the solid core (the original line is 2 screen pixels)
+        float feather = Math.max(0.25F, 0.4F / dpr); // soft edge
         float[] off = {-(hw + feather), -hw, hw, hw + feather};
         int[] col = {FRAME_CLEAR, FRAME, FRAME, FRAME_CLEAR};
 
@@ -493,12 +507,13 @@ public class CameraHud {
     //  HUD elements (all through warp())
     // ------------------------------------------------------------------------------------------
 
-    // Pixel-art look of Slender: The Arrival: every element is a grid of square "pixels" with thin seams.
-    private static final float BATT_CELL = 2.55F;
-    private static final float BAR_CELL = 2.05F;
-    private static final float REC_CELL = 2.45F;
-    private static final float DOT_CELL = 2.5F;
-    private static final float TIME_CELL = 1.85F;
+    // Pixel-art look of the original: every element is a grid of cells, 1 screen pixel apart. The sizes were measured on a
+    // 1920x1080 screenshot of the original (1 reference pixel = 2.6 screen pixels); the cells of the original are not exactly square.
+    private static final float BATT_CW = 2.49F, BATT_CH = 2.17F;   // 25 cells wide (23 + nub) x 11 high
+    private static final float BAR_CW = 2.90F, BAR_CH = 2.18F;     // 55 x 5 cells
+    private static final float REC_CW = 2.54F, REC_CH = 2.34F;     // letters: 17 x 7 cells
+    private static final float DOT_CW = 2.57F, DOT_CH = 2.64F;     // 7 x 7 cells
+    private static final float TIME_CELL = 1.88F;
 
     private static final String[] REC_R = {"XXXX.", "X...X", "X...X", "XXXX.", "X.X..", "X..X.", "X...X"};
     private static final String[] REC_E = {"XXXXX", "X....", "X....", "XXXX.", "X....", "X....", "XXXXX"};
@@ -511,91 +526,97 @@ public class CameraHud {
             {".X.", "X.X", "X.X", "X.X", ".X."},   // 0
             {".X.", "XX.", ".X.", ".X.", "XXX"},   // 1
             {"XXX", "..X", ".X.", "X..", "XXX"},   // 2
-            {"XX.", "..X", ".X.", "..X", "XX."},   // 3
+            {".X.", "X.X", ".X.", "X.X", ".X."},   // 3 (copied from the original photo)
             {"X.X", "X.X", "XXX", "..X", "..X"},   // 4
             {"XXX", "X..", ".X.", "..X", "XX."},   // 5
             {".XX", "X..", "XX.", "X.X", ".X."},   // 6
             {"XXX", "..X", ".X.", ".X.", ".X."},   // 7
-            {".X.", "X.X", ".X.", "X.X", ".X."},   // 8
+            {"XXX", "X.X", "XXX", "X.X", "XXX"},   // 8 (not seen in the photos: drawn so that it differs from 3)
             {".X.", "X.X", ".XX", "..X", "XX."}    // 9
     };
 
-    /** One pixel-art cell: grid origin (ox, oy), cell size cs, position/size in cells, small seam inset. */
-    private static void cell(float ox, float oy, float cs, float col, float row, float wc, float hc,
-                             int argb, float inset) {
-        float in = inset * cs;
-        wRect(ox + col * cs + in, oy + row * cs + in, ox + (col + wc) * cs - in, oy + (row + hc) * cs - in, argb);
+    /** a coordinate rounded to a whole screen pixel. */
+    private static float snapPx(float v) {
+        return Math.round(v * curDpr) / curDpr;
     }
 
-    private static void bitmap(float ox, float oy, float cs, float col0, String[] rows, int argb, float inset) {
+    /** One pixel-art cell: grid origin (ox, oy), cell size (cw, ch), position/size in cells. 1 screen pixel is left free between cells. */
+    private static void cell(float ox, float oy, float cw, float ch, float col, float row, float wc, float hc, int argb) {
+        float seam = 1F / curDpr;
+        float x0 = snapPx(ox + col * cw), x1 = snapPx(ox + (col + wc) * cw) - seam;
+        float y0 = snapPx(oy + row * ch), y1 = snapPx(oy + (row + hc) * ch) - seam;
+        if (x1 <= x0) x1 = x0 + seam;
+        if (y1 <= y0) y1 = y0 + seam;
+        wRect(x0, y0, x1, y1, argb);
+    }
+
+    private static void bitmap(float ox, float oy, float cw, float ch, float col0, String[] rows, int argb) {
         for (int r = 0; r < rows.length; r++) {
             for (int c = 0; c < rows[r].length(); c++) {
-                if (rows[r].charAt(c) == 'X') cell(ox, oy, cs, col0 + c, r, 1F, 1F, argb, inset);
+                if (rows[r].charAt(c) == 'X') cell(ox, oy, cw, ch, col0 + c, r, 1F, 1F, argb);
             }
         }
     }
 
-    /** Battery is always full: 1-cell outline, checkerboard of cells inside, small nub on the right. */
+    /** Battery: outline 23 x 11 cells, nub 2 x 5 cells, 21 x 9 checkerboard inside. */
     private static void drawBattery() {
-        float x = 33F, y = 34.5F, cs = BATT_CELL;
-        int bodyW = 22, bodyH = 9;
+        float x = 32.3F, y = 34.6F, cw = BATT_CW, ch = BATT_CH;
+        int bodyW = 23, bodyH = 11;
         for (int c = 0; c < bodyW; c++) {
-            cell(x, y, cs, c, 0, 1, 1, GRAY_EDGE, 0.05F);
-            cell(x, y, cs, c, bodyH - 1, 1, 1, GRAY_EDGE, 0.05F);
+            cell(x, y, cw, ch, c, 0, 1, 1, GRAY_EDGE);
+            cell(x, y, cw, ch, c, bodyH - 1, 1, 1, GRAY_EDGE);
         }
         for (int r = 1; r < bodyH - 1; r++) {
-            cell(x, y, cs, 0, r, 1, 1, GRAY_EDGE, 0.05F);
-            cell(x, y, cs, bodyW - 1, r, 1, 1, GRAY_EDGE, 0.05F);
+            cell(x, y, cw, ch, 0, r, 1, 1, GRAY_EDGE);
+            cell(x, y, cw, ch, bodyW - 1, r, 1, 1, GRAY_EDGE);
         }
-        cell(x, y, cs, bodyW, 2.5F, 1.5F, 4F, GRAY_EDGE, 0.05F);
+        for (int r = 3; r <= 7; r++) {
+            cell(x, y, cw, ch, bodyW, r, 1, 1, GRAY_EDGE);
+            cell(x, y, cw, ch, bodyW + 1, r, 1, 1, GRAY_EDGE);
+        }
         for (int i = 0; i < bodyW - 2; i++) {
             for (int j = 0; j < bodyH - 2; j++) {
                 if (((i + j) & 1) != 0) continue;
-                cell(x, y, cs, 1 + i, 1 + j, 1, 1, GRAY_LIT, 0.14F);
+                cell(x, y, cw, ch, 1 + i, 1 + j, 1, 1, BATT_LIT);
             }
         }
     }
 
-    /** Long bar at the top center, a pixel-art frame; the small hollow marker slides along it as the zoom grows. */
+    /** Long bar at the top centre (55 x 5 cells); the small hollow marker slides along it as the zoom grows. */
     private static void drawTopBar(int refW, float zoom) {
-        float cs = BAR_CELL;
-        int cols = 72;
-        float x = refW * 0.5F - cols * cs * 0.5F, y = 33F;
+        float cw = BAR_CW, ch = BAR_CH;
+        int cols = 55;
+        float x = refW * 0.5F - cols * cw * 0.5F + 1.1F, y = 32.7F;
         for (int c = 1; c < cols - 1; c++) {
-            cell(x, y, cs, c, 0, 1, 1, GRAY_EDGE, 0.05F);
-            cell(x, y, cs, c, 4, 1, 1, GRAY_EDGE, 0.05F);
+            cell(x, y, cw, ch, c, 0, 1, 1, GRAY_EDGE);
+            cell(x, y, cw, ch, c, 4, 1, 1, GRAY_EDGE);
         }
         for (int r = 1; r <= 3; r++) {
-            cell(x, y, cs, 0, r, 1, 1, GRAY_EDGE, 0.05F);
-            cell(x, y, cs, cols - 1, r, 1, 1, GRAY_EDGE, 0.05F);
+            cell(x, y, cw, ch, 0, r, 1, 1, GRAY_EDGE);
+            cell(x, y, cw, ch, cols - 1, r, 1, 1, GRAY_EDGE);
         }
-        int hc = 1 + Math.round(Mth.clamp(zoom, 0F, 1F) * (cols - 7));   // marker start column, 1..65
+        int hc = 1 + Math.round(Mth.clamp(zoom, 0F, 1F) * (cols - 7));   // marker start column
         for (int c = 1; c <= 3; c++) {
-            cell(x, y, cs, hc + c, 1, 1, 1, GRAY_LIT, 0.08F);
-            cell(x, y, cs, hc + c, 3, 1, 1, GRAY_LIT, 0.08F);
+            cell(x, y, cw, ch, hc + c, 1, 1, 1, GRAY_LIT);
+            cell(x, y, cw, ch, hc + c, 3, 1, 1, GRAY_LIT);
         }
-        cell(x, y, cs, hc, 2, 1, 1, GRAY_LIT, 0.08F);
-        cell(x, y, cs, hc + 4, 2, 1, 1, GRAY_LIT, 0.08F);
+        cell(x, y, cw, ch, hc, 2, 1, 1, GRAY_LIT);
+        cell(x, y, cw, ch, hc + 4, 2, 1, 1, GRAY_LIT);
     }
 
-    /** Dark red pixel-art dot (always on) and the pixel letters REC (blinking, as before). */
+    /** The red dot (always on) and the pixel letters REC (blinking). */
     private static void drawRec(int refW, boolean blinkOn) {
-        float right = refW - 34F;
-        float cs = REC_CELL, pitch = 6.45F;
-        float textW = (2F * pitch + 5F) * cs;
-        float tx = right - textW, ty = 36F;
-
-        float dcs = DOT_CELL;
-        float dx = tx - 4.2F - 7F * dcs, dy = 34.1F;
-        bitmap(dx, dy, dcs, 0F, REC_DOT, RED, 0.05F);
-
+        float pitch = 6F;
+        float tx = refW - 77.6F, ty = 35.7F;
+        float dx = refW - 100.3F, dy = 34.2F;
+        bitmap(dx, dy, DOT_CW, DOT_CH, 0F, REC_DOT, RED);
         if (blinkOn) {
-            for (int i = 0; i < 3; i++) bitmap(tx, ty, cs, i * pitch, REC_LETTERS[i], RED, 0.06F);
+            for (int i = 0; i < 3; i++) bitmap(tx, ty, REC_CW, REC_CH, i * pitch, REC_LETTERS[i], RED);
         }
     }
 
     private static void drawTimer(int refW) {
-        float right = refW - 34F;
+        float right = refW - 36.7F;
         int secs = recTicks / 20;
         String time = String.format("%02d:%02d:%02d", secs / 3600, (secs / 60) % 60, secs % 60);
         float cs = TIME_CELL;
@@ -603,27 +624,34 @@ public class CameraHud {
         int total = 0;
         for (int i = 0; i < time.length(); i++) total += time.charAt(i) == ':' ? 2 : 4;
         total -= 1;
-        float x = right - total * cs, y = 57F;
+        float x = right - total * cs, y = 56.9F;
 
         int col = 0;
         for (int i = 0; i < time.length(); i++) {
             char ch = time.charAt(i);
             if (ch == ':') {
-                cell(x, y, cs, col, 1, 1, 1, GRAY_LIT, 0.06F);
-                cell(x, y, cs, col, 4, 1, 1, GRAY_LIT, 0.06F);
+                cell(x, y, cs, cs, col, 1, 1, 1, GRAY_LIT);
+                cell(x, y, cs, cs, col, 4, 1, 1, GRAY_LIT);
                 col += 2;
             } else {
-                bitmap(x, y, cs, col, DIGITS[ch - '0'], GRAY_LIT, 0.06F);
+                bitmap(x, y, cs, cs, col, DIGITS[ch - '0'], GRAY_LIT);
                 col += 4;
             }
         }
     }
 
+    /** ONE plus: 3 screen pixels thick, 93 long (the original picture is 31 pixels x 3), faint. The middle is drawn only once. */
     private static void drawCross(int refW) {
-        int mx = refW / 2, my = REF_H / 2;
-        int c = 0x48FFFFFF;
-        wRect(mx - 15, my, mx + 16, my + 1, c);
-        wRect(mx, my - 15, mx + 1, my + 16, c);
+        float mx = refW * 0.5F - 0.8F, my = REF_H * 0.5F - 3.1F;
+        float half = 17.9F, t = 1.15F;
+        int c = 0x26FFFFFF;
+        float cx0 = snapPx(mx - t * 0.5F), cx1 = snapPx(mx + t * 0.5F);
+        float cy0 = snapPx(my - t * 0.5F), cy1 = snapPx(my + t * 0.5F);
+        if (cx1 <= cx0) cx1 = cx0 + 1F / curDpr;
+        if (cy1 <= cy0) cy1 = cy0 + 1F / curDpr;
+        wRect(snapPx(mx - half), cy0, snapPx(mx + half), cy1, c);        // horizontal bar, full length
+        wRect(cx0, snapPx(my - half), cx1, cy0, c);                       // vertical: above the middle
+        wRect(cx0, cy1, cx1, snapPx(my + half), c);                       // vertical: below the middle
     }
 
     // ------------------------------------------------------------------------------------------
