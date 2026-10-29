@@ -207,7 +207,7 @@ public class CameraHud {
     /** a very light fish-eye of the frame, the cross and the other white elements only (the sides bow outwards). */
     private static final float LENS = 0.01F;
     /** the same lens for the HORIZONTAL lines of the frame (and everything else): 0 = straight (as before), > 0 = the top and bottom bow outwards, < 0 = inwards. */
-    private static final float LENS_H = 0F;
+    private static final float LENS_H = 0.01F;
     private static final int SCENE_COLS = 48, SCENE_ROWS = 28;
     private static RenderTarget sceneCopy;
     private static float caScale;
