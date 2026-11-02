@@ -710,38 +710,88 @@ public class CameraHud {
     private static final int GRAIN_TEX_SIZE = 256, SCRATCH_TEX_SIZE = 512;
     /** 1 = the strength of the original; a little less keeps the look of the old grain (the old one was about 20% weaker). */
     private static final float GRAIN_GAIN = 0.80F;
-    private static final float SCRATCH_GAIN = 1.0F;
+    private static final float SCRATCH_GAIN = 1.5F;
     /** strength of the burst of the teleport glitch (the old one was an almost opaque noise). */
-    private static final float BURST_GRAIN = 1.2F;
+    /** the scratches are drawn only while the original's dice has lifted scratchMax above its calm value (cache): from about 50% sanity loss. */
     private static final int SCRATCH_PIXEL_SIZE = 1;
-    private static float scratchU, scratchV;
+    private static float scratchU, scratchV, grainU, grainV;
     private static long scratchUntil;
+
+    /** the grain of the teleport burst: random static, made once (the old way), drawn almost opaque while the teleport glitch lasts. */
+    private static void ensureBurstTexture(Minecraft mc) {
+        if (grain != null) return;
+        grain = new DynamicTexture(TEX, TEX, false);
+        grain.setFilter(false, false);
+        grainLoc = mc.getTextureManager().register("slendercam_grain", grain);
+        NativeImage img = grain.getPixels();
+        if (img == null) return;
+        for (int y = 0; y < TEX; y++) {
+            for (int x = 0; x < TEX; x++) {
+                int v = RND.nextInt(256), a = RND.nextInt(256);
+                int r = v, g2 = v, b = v;
+                if (RND.nextInt(100) < 60) {
+                    r = clamp255(v + RND.nextInt(61) - 30);
+                    g2 = clamp255(v + RND.nextInt(61) - 30);
+                    b = clamp255(v + RND.nextInt(61) - 30);
+                }
+                img.setPixelRGBA(x, y, (a << 24) | (b << 16) | (g2 << 8) | r);
+            }
+        }
+        grain.upload();
+    }
+
+    private static int clamp255(int v) { return v < 0 ? 0 : Math.min(v, 255); }
 
     private static void drawGrain(PoseStack ps, int w, int h, float gi, float fl) {
         Minecraft mc = Minecraft.getInstance();
-        float grain = GRAIN_GAIN * GlitchPort.grainMax();
-        float scratch = SCRATCH_GAIN * GlitchPort.scratchMax();
-        if (fl > 0F) grain = BURST_GRAIN * (0.9F + 0.1F * RND.nextFloat());     // teleport: the same grain, pushed to a burst
-        if (grain <= 0.002F && scratch <= 0.002F) return;
-
         double g = mc.getWindow().getGuiScale();
         long now = System.currentTimeMillis();
+
+        if (fl > 0F) {
+            // TELEPORT: the same camera grain, pushed to an almost opaque burst (as before)
+            ensureBurstTexture(mc);
+            RenderSystem.enableBlend();
+            RenderSystem.defaultBlendFunc();
+            RenderSystem.setShader(GameRenderer::getPositionTexShader);
+            RenderSystem.setShaderTexture(0, grainLoc);
+            RenderSystem.setShaderColor(1F, 1F, 1F, 0.90F + 0.07F * RND.nextFloat());
+            int rw = Math.max(1, (int) Math.round(w * g)), rh = Math.max(1, (int) Math.round(h * g));
+            GuiComponent.blit(ps, 0, 0, w, h, RND.nextInt(TEX), RND.nextInt(TEX), rw, rh, TEX, TEX);
+            RenderSystem.setShaderColor(1F, 1F, 1F, 1F);
+            RenderSystem.disableBlend();
+            return;
+        }
+
+        // the strengths come from the original's dice (GlitchPort): calm = the cache values, grainMax grows with the sanity loss
+        float grainI = GRAIN_GAIN * GlitchPort.grainMax();
+        // scratches: only while scratchMax is above its calm value, i.e. from about 50% loss (when the dice has applied)
+        boolean scratchOn = GlitchPort.scratchMax() - GlitchPort.SCRATCH_CACHE > 0.003F;
+        float scratchI = scratchOn ? SCRATCH_GAIN * GlitchPort.scratchMax() : 0F;
+
+        // the grain is re-rolled like before: every 40 ms while the dice is on, otherwise every 120 ms
+        long interval = GlitchPort.dice() ? 40 : 120;
+        if (now - lastNoise > interval) {
+            lastNoise = now;
+            grainU = RND.nextInt(GRAIN_TEX_SIZE);
+            grainV = RND.nextInt(GRAIN_TEX_SIZE);
+        }
         if (now >= scratchUntil) {                         // the scratches jump to a new place about 10 times a second
             scratchU = RND.nextInt(SCRATCH_TEX_SIZE);
             scratchV = RND.nextInt(SCRATCH_TEX_SIZE);
             scratchUntil = now + 40L + (long) (RND.nextFloat() * 200F);
         }
+        if (grainI <= 0.002F && scratchI <= 0.002F) return;
 
         try {
             RenderSystem.enableBlend();
             RenderSystem.blendFunc(GlStateManager.SourceFactor.ONE, GlStateManager.DestFactor.ONE);
-            if (grain > 0.002F) {
+            if (grainI > 0.002F) {
                 int rw = Math.max(1, (int) Math.round(w * g)), rh = Math.max(1, (int) Math.round(h * g));
-                noisePass(ps, w, h, GRAIN_TEX, GRAIN_TEX_SIZE, RND.nextInt(GRAIN_TEX_SIZE), RND.nextInt(GRAIN_TEX_SIZE), rw, rh, grain);
+                noisePass(ps, w, h, GRAIN_TEX, GRAIN_TEX_SIZE, grainU, grainV, rw, rh, grainI);
             }
-            if (scratch > 0.002F) {
+            if (scratchI > 0.002F) {
                 int rw = Math.max(1, (int) Math.round(w * g / SCRATCH_PIXEL_SIZE)), rh = Math.max(1, (int) Math.round(h * g / SCRATCH_PIXEL_SIZE));
-                noisePass(ps, w, h, SCRATCH_TEX, SCRATCH_TEX_SIZE, scratchU, scratchV, rw, rh, scratch);
+                noisePass(ps, w, h, SCRATCH_TEX, SCRATCH_TEX_SIZE, scratchU, scratchV, rw, rh, scratchI);
             }
         } finally {
             GL14.glBlendEquation(GL14.GL_FUNC_ADD);
