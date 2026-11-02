@@ -29,6 +29,7 @@ import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.fml.common.Mod;
 
 import org.lwjgl.opengl.GL11;
+import org.lwjgl.opengl.GL14;
 import org.lwjgl.opengl.GL30;
 
 import java.util.Random;
@@ -697,121 +698,81 @@ public class CameraHud {
     }
 
     /**
-     * Fine film grain: a 512x512 noise texture re-rolled several times a second (every frame in a flash).
-     * Under the glitch it gets stronger, flickers and refreshes faster ("hisses").
+     * GRAIN AND SCRATCHES OF THE ORIGINAL (Unity "Hidden/Noise Shader RGB"):
+     *     colour = picture + (grain * 2 - 1) * Intensity.x + (scratch * 2 - 1) * Intensity.y
+     * The two textures of the original game (noise_grain.png 256x256, noise_scratch.png 512x512) are tiled over the whole screen,
+     * one texel per screen pixel, and every frame they are moved to a random place. The strengths are GlitchPort.grainMax() and
+     * GlitchPort.scratchMax(): they follow the sanity loss (distortion), so the grain and the scratches grow with it.
+     * The signed sum is made with two additive passes: "+ 2 * I * texture", then "- I" (a flat colour).
      */
-    private static int clamp255(int v) { return v < 0 ? 0 : Math.min(v, 255); }
+    private static final ResourceLocation GRAIN_TEX = new ResourceLocation(SlenderCamMod.ID, "textures/gui/noise_grain.png");
+    private static final ResourceLocation SCRATCH_TEX = new ResourceLocation(SlenderCamMod.ID, "textures/gui/noise_scratch.png");
+    private static final int GRAIN_TEX_SIZE = 256, SCRATCH_TEX_SIZE = 512;
+    /** 1 = the strength of the original; a little less keeps the look of the old grain (the old one was about 20% weaker). */
+    private static final float GRAIN_GAIN = 0.80F;
+    private static final float SCRATCH_GAIN = 1.0F;
+    /** strength of the burst of the teleport glitch (the old one was an almost opaque noise). */
+    private static final float BURST_GRAIN = 1.2F;
+    private static final int SCRATCH_PIXEL_SIZE = 1;
+    private static float scratchU, scratchV;
+    private static long scratchUntil;
 
     private static void drawGrain(PoseStack ps, int w, int h, float gi, float fl) {
         Minecraft mc = Minecraft.getInstance();
-        if (grain == null) {
-            grain = new DynamicTexture(TEX, TEX, false);
-            grain.setFilter(false, false);
-            grainLoc = mc.getTextureManager().register("slendercam_grain", grain);
-        }
-        long now = System.currentTimeMillis();
-        long interval = fl > 0.05F ? 0 : (GlitchPort.dice() ? 40 : 120);
-        if (now - lastNoise > interval) {
-            lastNoise = now;
-            NativeImage img = grain.getPixels();
-            int chroma = 18 + Math.round(42F * Mth.clamp(GlitchPort.intensity() / 50F, 0F, 1F));    // the colour cast grows with the sanity loss
-            if (img != null) {
-                for (int y = 0; y < TEX; y++) {
-                    for (int x = 0; x < TEX; x++) {
-                        // grey grain with a soft colour cast: real signal noise, not just grey-white dots
-                        int v = RND.nextInt(256);
-                        int a = RND.nextInt(256);
-                        int r = v, g2 = v, b = v;
-                        if (RND.nextInt(100) < 60) {
-                            r = clamp255(v + RND.nextInt(2 * chroma + 1) - chroma);
-                            g2 = clamp255(v + RND.nextInt(2 * chroma + 1) - chroma);
-                            b = clamp255(v + RND.nextInt(2 * chroma + 1) - chroma);
-                        }
-                        img.setPixelRGBA(x, y, (a << 24) | (b << 16) | (g2 << 8) | r);
-                    }
-                }
-                grain.upload();
-            }
-        }
-        // GRAIN OF THE ORIGINAL: grainIntensityMax = Random.Range(cache, 0.015 * I) while the dice is on, the cache value
-        // otherwise (re-rolled 50 times a second in GlitchPort). The cache value gives the calm grain of before (0.084).
-        float alpha = Math.min(0.95F, 0.42F * GlitchPort.grainMax());
-        if (fl > 0F) {
-            // Teleport uses the same camera grain, simply pushed to an almost opaque burst.
-            alpha = 0.90F + 0.07F * RND.nextFloat();
-        }
+        float grain = GRAIN_GAIN * GlitchPort.grainMax();
+        float scratch = SCRATCH_GAIN * GlitchPort.scratchMax();
+        if (fl > 0F) grain = BURST_GRAIN * (0.9F + 0.1F * RND.nextFloat());     // teleport: the same grain, pushed to a burst
+        if (grain <= 0.002F && scratch <= 0.002F) return;
 
         double g = mc.getWindow().getGuiScale();
-
-        RenderSystem.enableBlend();
-        RenderSystem.defaultBlendFunc();
-        RenderSystem.setShader(GameRenderer::getPositionTexShader);
-        RenderSystem.setShaderTexture(0, grainLoc);
-        // the scratches of the original are GAPS in the grain: horizontal bands over the whole width where the noise is missing
-        int bands = updateScratches(h);
-        float u0 = RND.nextInt(TEX), v0 = RND.nextInt(TEX);
-        int y = 0;
-        for (int i = 0; i < bands; i++) {
-            int a = Math.max(y, BAND_A[i]), b = Math.max(a, BAND_B[i]);
-            grainStrip(ps, w, y, a, u0, v0, g, alpha);
-            grainStrip(ps, w, a, b, u0, v0, g, alpha * (1F - BAND_K[i]));
-            y = b;
-        }
-        grainStrip(ps, w, y, h, u0, v0, g, alpha);
-        RenderSystem.setShaderColor(1F, 1F, 1F, 1F);
-        RenderSystem.disableBlend();
-    }
-
-    /** one horizontal strip (gui rows ya..yb) of the grain, with the same texture offset as the other strips. */
-    private static void grainStrip(PoseStack ps, int w, int ya, int yb, float u0, float v0, double g, float alpha) {
-        if (yb <= ya || alpha <= 0.001F) return;
-        RenderSystem.setShaderColor(1F, 1F, 1F, alpha);
-        int regionW = Math.max(1, (int) Math.round(w * g / GRAIN_PIXEL_SIZE));
-        int regionH = Math.max(1, (int) Math.round((yb - ya) * g / GRAIN_PIXEL_SIZE));
-        GuiComponent.blit(ps, 0, ya, w, yb - ya, u0, v0 + (float) (ya * g / GRAIN_PIXEL_SIZE), regionW, regionH, TEX, TEX);
-    }
-
-    private static final int MAX_SCRATCH = 3;
-    private static final int[] BAND_A = new int[MAX_SCRATCH], BAND_B = new int[MAX_SCRATCH];
-    private static final float[] BAND_K = new float[MAX_SCRATCH];
-    private static final float[] SCR_Y = new float[MAX_SCRATCH], SCR_V = new float[MAX_SCRATCH], SCR_T = new float[MAX_SCRATCH];
-    private static int scratchCount;
-    private static long scratchUntil, scratchLastMs;
-
-    /**
-     * Scratches of the original (scratchIntensityMax = Random.Range(cache, 0.005 * I)): they are not lines that are drawn, but
-     * GAPS in the grain: thin horizontal bands over the WHOLE width of the screen where the noise is missing, so they look like
-     * dark scratches on the film. They jump to a new height about 10 times a second (scratchFPS) and drift while they live.
-     * Only the part above the calm value counts, so the calm picture has none. Fills BAND_A/B (gui rows) and BAND_K (how empty
-     * the gap is, 0..1), sorted from the top; returns how many.
-     */
-    private static int updateScratches(int h) {
-        float excess = GlitchPort.scratchMax() - GlitchPort.SCRATCH_CACHE;
-        if (excess <= 0.003F) { scratchCount = 0; scratchUntil = 0L; return 0; }
         long now = System.currentTimeMillis();
-        float dt = scratchLastMs == 0L ? 0F : Math.min(0.1F, (now - scratchLastMs) / 1000F);
-        scratchLastMs = now;
-        if (now >= scratchUntil) {
-            scratchCount = 1 + RND.nextInt(MAX_SCRATCH);
-            for (int i = 0; i < scratchCount; i++) {
-                SCR_Y[i] = RND.nextFloat();
-                SCR_V[i] = (RND.nextFloat() - 0.5F) * 0.4F;         // drift, share of the height per second
-                SCR_T[i] = 0.6F + 1.6F * RND.nextFloat();           // thickness: about 1-4 pixels of a 1080p screen
-            }
+        if (now >= scratchUntil) {                         // the scratches jump to a new place about 10 times a second
+            scratchU = RND.nextInt(SCRATCH_TEX_SIZE);
+            scratchV = RND.nextInt(SCRATCH_TEX_SIZE);
             scratchUntil = now + 40L + (long) (RND.nextFloat() * 200F);
         }
-        float k = Math.min(0.95F, 0.45F + excess * 3.5F);
-        int n = 0;
-        for (int i = 0; i < scratchCount; i++) {
-            SCR_Y[i] += SCR_V[i] * dt;
-            SCR_Y[i] -= (float) Math.floor(SCR_Y[i]);
-            int th = Math.max(1, Math.round(SCR_T[i] * h / 1080F * 1.5F));
-            int a = Math.round(SCR_Y[i] * (h - th));
-            int p = n;
-            while (p > 0 && BAND_A[p - 1] > a) { BAND_A[p] = BAND_A[p - 1]; BAND_B[p] = BAND_B[p - 1]; BAND_K[p] = BAND_K[p - 1]; p--; }
-            BAND_A[p] = a; BAND_B[p] = a + th; BAND_K[p] = k;
-            n++;
+
+        try {
+            RenderSystem.enableBlend();
+            RenderSystem.blendFunc(GlStateManager.SourceFactor.ONE, GlStateManager.DestFactor.ONE);
+            if (grain > 0.002F) {
+                int rw = Math.max(1, (int) Math.round(w * g)), rh = Math.max(1, (int) Math.round(h * g));
+                noisePass(ps, w, h, GRAIN_TEX, GRAIN_TEX_SIZE, RND.nextInt(GRAIN_TEX_SIZE), RND.nextInt(GRAIN_TEX_SIZE), rw, rh, grain);
+            }
+            if (scratch > 0.002F) {
+                int rw = Math.max(1, (int) Math.round(w * g / SCRATCH_PIXEL_SIZE)), rh = Math.max(1, (int) Math.round(h * g / SCRATCH_PIXEL_SIZE));
+                noisePass(ps, w, h, SCRATCH_TEX, SCRATCH_TEX_SIZE, scratchU, scratchV, rw, rh, scratch);
+            }
+        } finally {
+            GL14.glBlendEquation(GL14.GL_FUNC_ADD);
+            RenderSystem.setShaderColor(1F, 1F, 1F, 1F);
+            RenderSystem.defaultBlendFunc();
+            RenderSystem.disableBlend();
         }
-        return n;
+    }
+
+    /** picture += (texture * 2 - 1) * intensity over the whole screen: first "+ 2 * I * texture", then "- I". */
+    private static void noisePass(PoseStack ps, int w, int h, ResourceLocation tex, int texSize, float u0, float v0, int regionW, int regionH, float intensity) {
+        float k = Math.min(1F, 2F * intensity);
+        float sub = Math.min(1F, intensity);
+        GL14.glBlendEquation(GL14.GL_FUNC_ADD);
+        RenderSystem.setShader(GameRenderer::getPositionTexShader);
+        RenderSystem.setShaderTexture(0, tex);
+        RenderSystem.setShaderColor(k, k, k, 1F);
+        GuiComponent.blit(ps, 0, 0, w, h, u0, v0, regionW, regionH, texSize, texSize);
+        RenderSystem.setShaderColor(1F, 1F, 1F, 1F);
+
+        GL14.glBlendEquation(GL14.GL_FUNC_REVERSE_SUBTRACT);
+        RenderSystem.disableCull();
+        RenderSystem.setShader(GameRenderer::getPositionColorShader);
+        Matrix4f m = ps.last().pose();
+        BufferBuilder b = Tesselator.getInstance().getBuilder();
+        b.begin(VertexFormat.Mode.QUADS, DefaultVertexFormat.POSITION_COLOR);
+        b.vertex(m, 0F, h, 0F).color(sub, sub, sub, 1F).endVertex();
+        b.vertex(m, w, h, 0F).color(sub, sub, sub, 1F).endVertex();
+        b.vertex(m, w, 0F, 0F).color(sub, sub, sub, 1F).endVertex();
+        b.vertex(m, 0F, 0F, 0F).color(sub, sub, sub, 1F).endVertex();
+        BufferUploader.drawWithShader(b.end());
+        GL14.glBlendEquation(GL14.GL_FUNC_ADD);
     }
 }
