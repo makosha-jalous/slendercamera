@@ -526,7 +526,7 @@ public class CameraHud {
             {".X.", "X.X", "X.X", "X.X", ".X."},   // 0
             {".X.", "XX.", ".X.", ".X.", "XXX"},   // 1
             {"XXX", "..X", ".X.", "X..", "XXX"},   // 2
-            {".X.", "X.X", ".X.", "X.X", ".X."},   // 3 (copied from the original photo)
+            {"XX.", "..X", ".X.", "..X", "XX."},   // 3 (rounded like the 0: the old one had extra cells and looked like an 8)
             {"X.X", "X.X", "XXX", "..X", "..X"},   // 4
             {"XXX", "X..", ".X.", "..X", "XX."},   // 5
             {".XX", "X..", "XX.", "X.X", ".X."},   // 6
@@ -658,20 +658,42 @@ public class CameraHud {
     //  Vignette and grain (unchanged)
     // ------------------------------------------------------------------------------------------
 
+    /**
+     * VIGNETTE of the original game (Unity "Hidden/VignetteShader"): colour * (1 - vignetteIntensity * dot(d, d)), where
+     * d = (uv - 0.5) * 2, so it is 0 in the middle and 2 in the corners. Here it is a black layer with the alpha
+     * vignetteIntensity * dot(d, d) over a fine net: the picture is multiplied by exactly the same factor.
+     * VIGNETTE_INTENSITY: 0.30 = soft, 0.45 = like the original photos, 0.60 = heavy (corners almost black).
+     */
+    private static final float VIGNETTE_INTENSITY = 0.45F;
+    private static final int VIG_COLS = 48, VIG_ROWS = 27;
+
     private static void drawVignette(PoseStack ps, int w, int h) {
-        gradient(ps, w, h, (int) (h * 0.16F), 0x78, true);
-        gradient(ps, w, h, (int) (h * 0.30F), 0xB4, false);
+        RenderSystem.enableBlend();
+        RenderSystem.defaultBlendFunc();
+        RenderSystem.disableCull();
+        RenderSystem.setShader(GameRenderer::getPositionColorShader);
+        Matrix4f m = ps.last().pose();
+        BufferBuilder b = Tesselator.getInstance().getBuilder();
+        b.begin(VertexFormat.Mode.QUADS, DefaultVertexFormat.POSITION_COLOR);
+        for (int j = 0; j < VIG_ROWS; j++) {
+            float ya = h * j / (float) VIG_ROWS, yb = h * (j + 1) / (float) VIG_ROWS;
+            for (int i = 0; i < VIG_COLS; i++) {
+                float xa = w * i / (float) VIG_COLS, xb = w * (i + 1) / (float) VIG_COLS;
+                vigVertex(b, m, xa, ya, i, j);
+                vigVertex(b, m, xa, yb, i, j + 1);
+                vigVertex(b, m, xb, yb, i + 1, j + 1);
+                vigVertex(b, m, xb, ya, i + 1, j);
+            }
+        }
+        BufferUploader.drawWithShader(b.end());
+        RenderSystem.disableBlend();
     }
 
-    private static void gradient(PoseStack ps, int w, int h, int band, int maxAlpha, boolean top) {
-        int steps = 20;
-        int step = Math.max(1, band / steps);
-        for (int i = 0; i < steps; i++) {
-            int a = (int) (maxAlpha * (1F - i / (float) steps));
-            int col = a << 24;
-            if (top) GuiComponent.fill(ps, 0, i * step, w, (i + 1) * step, col);
-            else GuiComponent.fill(ps, 0, h - (i + 1) * step, w, h - i * step, col);
-        }
+    private static void vigVertex(BufferBuilder b, Matrix4f m, float x, float y, int gi, int gj) {
+        float dx = (gi / (float) VIG_COLS - 0.5F) * 2F;
+        float dy = (gj / (float) VIG_ROWS - 0.5F) * 2F;
+        float a = Mth.clamp(VIGNETTE_INTENSITY * (dx * dx + dy * dy), 0F, 1F);
+        b.vertex(m, x, y, 0F).color(0, 0, 0, Math.round(a * 255F)).endVertex();
     }
 
     /**
