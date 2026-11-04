@@ -258,6 +258,22 @@ public class CameraEffects {
     private static boolean heavyLatched;
     private static float seenGate;
 
+    // ---- the shake is HELD while he is out of view ----
+    // The formula of the shake is unchanged (the shape depends on his distance, the speed on the sanity). But when the player
+    // turns away, his distance keeps changing (he walks, he teleports), and the old code let the shape jump and the sway
+    // vanish in half a second. Now: the distance stays at its last "seen" value, and the sway fades only together with the sanity.
+    private static double heldDist = 1.0E9D;
+    private static float swayGate, swayPeak = 0.08F, holdPrevSanity;
+    /** the sway of a short sighting (tiny sanity) is measured against at least this much sanity, so it still fades in about 1-2 s. */
+    private static final float SWAY_PEAK_MIN = 0.08F;
+    // ---- motion blur: a strong close shake smears the picture ----
+    /** the blur starts from this sanity loss and is full from the second value (only when he is close: the figure eight). */
+    private static final float BLUR_SANITY_FROM = 0.30F, BLUR_SANITY_FULL = 0.85F;
+    private static float blurLevel;
+
+    /** 0..1: how strongly the picture is smeared now (read by CameraHud). */
+    public static float motionBlur() { return blurLevel; }
+
     private static final RandomSource HUD_RNG = RandomSource.create();
     private static int glitchCooldown = 60;
 
@@ -420,6 +436,11 @@ public class CameraEffects {
             rawSanity = 0F;
             seenNow = false;
             seenGate = 0F;
+            heldDist = 1.0E9D;
+            swayGate = 0F;
+            swayPeak = SWAY_PEAK_MIN;
+            holdPrevSanity = 0F;
+            blurLevel = 0F;
             heavyWait = 0;
             heavyLatched = false;
             breathEnv = 0F;
@@ -507,7 +528,27 @@ public class CameraEffects {
         sanity += (rawForCam - sanity) * 0.30F;
         if (sanity < 0.001F) sanity = 0F;
 
-        boolean near = cam && sl != null && !watcher && dist < NEAR_DIST;
+        // HOLD of the shake while he is out of view: the distance that decides the shape stays at the last value seen (it is
+        // updated while he is in view, while the sanity is still rising, and when there is nothing left to hold); the sway of
+        // the far shake never grows without a sighting and fades exactly as fast as the sanity falls.
+        boolean sanityRising = sanity > holdPrevSanity + 0.0005F;
+        holdPrevSanity = sanity;
+        if (!cam || watcher) {
+            heldDist = slenderDist;
+            swayGate = 0F;
+            swayPeak = SWAY_PEAK_MIN;
+        } else {
+            if (seen || sanityRising || sanity < 0.004F) heldDist = slenderDist;
+            if (seen) {
+                swayPeak = Math.max(sanity, SWAY_PEAK_MIN);
+                swayGate += (1F - swayGate) * 0.45F;
+            } else {
+                swayGate = Math.min(swayGate, Mth.clamp(sanity / swayPeak, 0F, 1F));
+            }
+            if (sanity < 0.002F && !seen) swayGate = 0F;
+        }
+
+        boolean near =cam && sl != null && !watcher && dist < NEAR_DIST;
 
         // grain and breathing
         INTENSITY.update(sanity, RISE, 1F, BREATH_FADE_TICKS);
@@ -1025,8 +1066,10 @@ public class CameraEffects {
             vanillaBobSwitched = false;
             mc.options.bobView().set(true);
         }
-        if (!CameraHud.active()) return;
-        if (mc.player == null) return;
+        if (!CameraHud.active() || mc.player == null) {
+            blurLevel = 0F;
+            return;
+        }
 
         long now = System.currentTimeMillis();
         float bobX;   // yaw (left-right)
@@ -1068,12 +1111,15 @@ public class CameraEffects {
         circPhase += cdt * 6.2831853F * turns;
         if (circPhase > 6.2831853F) circPhase -= 6.2831853F;
         double t = now / 1000.0;
-        float closeK = 1F - smooth(FIG_DIST_NEAR, FIG_DIST_FAR, (float) slenderDist);       // 1 = close, 0 = far
+        // the distance that decides the shape is the last one SEEN (held while he is out of view, see onClientTick)
+        float closeK = 1F - smooth(FIG_DIST_NEAR, FIG_DIST_FAR, (float) heldDist);          // 1 = close, 0 = far
+        // motion blur: the strong close shake (the fast figure eight) smears the picture, as in the original
+        blurLevel = closeK * smooth(BLUR_SANITY_FROM, BLUR_SANITY_FULL, sev);
         // close: x = sin(2 phase), y = sin(phase) = a figure eight that stands up
         float figX = (float) Math.sin(2.0 * circPhase) * FIG_RADIUS * on;
         float figY = (float) Math.sin(circPhase) * FIG_RADIUS * on;
         // far: the swaying, only while he is in view
-        float sway = seenGate * (0.40F + 0.60F * sev);
+        float sway = swayGate * (0.40F + 0.60F * sev);          // swayGate: 1 while he is seen, then it fades with the sanity
         float swayX = (SWAY_BIG * smoothShake(31, t, 0.5F) + SWAY_SMALL * smoothShake(32, t, 2.0F)) * sway;
         float swayY = (SWAY_BIG * smoothShake(33, t, 0.5F) + SWAY_SMALL * smoothShake(34, t, 2.0F)) * sway;
         tremX = figX;

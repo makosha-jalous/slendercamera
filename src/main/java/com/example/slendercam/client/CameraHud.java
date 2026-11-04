@@ -157,6 +157,9 @@ public class CameraHud {
         float dpr = s * (float) mc.getWindow().getGuiScale();   // device pixels per reference pixel
         boolean blinkOn = (System.currentTimeMillis() / BLINK_MS) % 2 == 0;
 
+        // motion blur of the strong shake: the picture is mixed with the previous one (before it is bent, so the history is the plain picture)
+        drawMotionBlur(ps, w, h);
+
         // the picture of the game is bent together with the frame (first, so the grain, the vignette and the
         // interface are drawn on top of the bent picture)
         ps.pushPose();
@@ -230,6 +233,82 @@ public class CameraHud {
         float offY = (1F - cx * cx) * sx * ar * FISH_K * cy;
         out[0] = offX * refW;
         out[1] = -offY * REF_H;
+    }
+
+    // ------------------------------------------------------------------------------------------
+    //  Motion blur: a strong shake (he is close, the sanity is almost gone) smears the picture
+    // ------------------------------------------------------------------------------------------
+
+    /** the longest "memory" of the blur in seconds (at full strength): the old picture fades out with this time constant, at any frame rate. */
+    private static final float BLUR_TAU_MAX = 0.030F;
+    /** the old picture never gets more than this share, so the new picture always shows through. */
+    private static final float BLUR_KEEP_MAX = 0.80F;
+    private static RenderTarget blurHistory;
+    private static boolean blurHistoryValid;
+    private static long blurLastNs;
+
+    /**
+     * Mixes the finished picture of the game with the picture of the previous frame (a feedback buffer): every frame
+     * result = old * keep + new * (1 - keep), then the result is remembered. A fast shake leaves a smooth trail.
+     * The strength comes from CameraEffects.motionBlur(); nothing is done (and nothing costs anything) when it is 0.
+     */
+    private static void drawMotionBlur(PoseStack ps, int w, int h) {
+        long ns = System.nanoTime();
+        float dt = blurLastNs == 0L ? 0.016F : (ns - blurLastNs) / 1e9F;
+        blurLastNs = ns;
+        float level = CameraEffects.motionBlur();
+        if (level < 0.01F || dt > 0.25F) {          // off, or the camera was down for a while: the old picture is out of date
+            blurHistoryValid = false;
+            if (level < 0.01F) return;
+        }
+        try {
+            Minecraft mc = Minecraft.getInstance();
+            RenderTarget main = mc.getMainRenderTarget();
+            int tw = main.width, th = main.height;
+            if (blurHistory == null) {
+                blurHistory = new TextureTarget(tw, th, false, Minecraft.ON_OSX);
+                blurHistory.setFilterMode(GL11.GL_NEAREST);
+                blurHistoryValid = false;
+            } else if (blurHistory.width != tw || blurHistory.height != th) {
+                blurHistory.resize(tw, th, Minecraft.ON_OSX);
+                blurHistoryValid = false;
+            }
+            if (blurHistoryValid) {
+                float tau = Math.max(0.001F, level * BLUR_TAU_MAX);
+                float keep = Math.min(BLUR_KEEP_MAX, (float) Math.exp(-Math.min(dt, 0.1F) / tau));
+                RenderSystem.enableBlend();
+                // constant alpha: result = old * keep + new * (1 - keep), whatever the alpha channel of the picture holds
+                RenderSystem.blendFuncSeparate(GL14.GL_CONSTANT_ALPHA, GL14.GL_ONE_MINUS_CONSTANT_ALPHA, GL11.GL_ONE, GL11.GL_ZERO);
+                GL14.glBlendColor(0F, 0F, 0F, keep);
+                RenderSystem.colorMask(true, true, true, false);
+                RenderSystem.disableCull();
+                RenderSystem.setShader(GameRenderer::getPositionTexShader);
+                RenderSystem.setShaderColor(1F, 1F, 1F, 1F);
+                RenderSystem.setShaderTexture(0, blurHistory.getColorTextureId());
+                Matrix4f m = ps.last().pose();
+                BufferBuilder b = Tesselator.getInstance().getBuilder();
+                b.begin(VertexFormat.Mode.QUADS, DefaultVertexFormat.POSITION_TEX);
+                b.vertex(m, 0F, 0F, 0F).uv(0F, 1F).endVertex();      // frame buffer textures are upside down
+                b.vertex(m, 0F, h, 0F).uv(0F, 0F).endVertex();
+                b.vertex(m, w, h, 0F).uv(1F, 0F).endVertex();
+                b.vertex(m, w, 0F, 0F).uv(1F, 1F).endVertex();
+                BufferUploader.drawWithShader(b.end());
+                RenderSystem.colorMask(true, true, true, true);
+                RenderSystem.defaultBlendFunc();
+                RenderSystem.disableBlend();
+            }
+            // remember the picture (as it is now, mixed) for the next frame
+            GlStateManager._glBindFramebuffer(GL30.GL_READ_FRAMEBUFFER, main.frameBufferId);
+            GlStateManager._glBindFramebuffer(GL30.GL_DRAW_FRAMEBUFFER, blurHistory.frameBufferId);
+            GL30.glBlitFramebuffer(0, 0, tw, th, 0, 0, tw, th, GL11.GL_COLOR_BUFFER_BIT, GL11.GL_NEAREST);
+            main.bindWrite(false);
+            blurHistoryValid = true;
+        } catch (Throwable ignored) {
+            blurHistoryValid = false;     // never break the game because of a graphics detail
+        } finally {
+            RenderSystem.colorMask(true, true, true, true);
+            RenderSystem.setShaderColor(1F, 1F, 1F, 1F);
+        }
     }
 
     private static void drawBentScene(PoseStack ps, int refW) {
